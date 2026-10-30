@@ -204,7 +204,7 @@ body {
   background: var(--soft-silver);
 }
 
-/* Featured Investigation */
+/* Sections & Cards */
 .section-block {
   padding: 80px 0;
   border-bottom: 1px solid var(--border-color);
@@ -236,7 +236,10 @@ body {
 .featured-meta {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-bottom: 20px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .featured-card h3 {
@@ -251,6 +254,23 @@ body {
   color: var(--text-muted);
   max-width: 800px;
   margin-bottom: 30px;
+}
+
+/* Spatial Embed Container */
+.embed-container {
+  width: 100%;
+  height: 520px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  margin-top: 24px;
+  background: var(--bg-color);
+}
+
+.embed-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
 }
 
 .read-link {

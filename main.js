@@ -2,7 +2,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const themeToggle = document.getElementById('theme-toggle');
   const htmlElement = document.documentElement;
 
-  // Check saved theme or system preference
   const savedTheme = localStorage.getItem('theme') || 'light';
   htmlElement.setAttribute('data-theme', savedTheme);
   themeToggle.textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
