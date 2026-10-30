@@ -1,156 +1,114 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-concept="horizon">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Marvel Tang | Inspiring Tomorrow Growing With Marvel</title>
-  <link rel="stylesheet" href="style.css">
-  <!-- Importing Neue Montreal style font via Inter / grotesque styling fallback -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marvel Tang | The obvious is rarely the whole story</title>
+<meta name="description" content="Marvel Tang explores the strategies behind brands, the psychology behind consumers, and the decisions that shape businesses.">
+<link rel="canonical" href="https://marveltang.com/">
+<meta name="theme-color" content="#F5F5F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15191F" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Marvel Tang">
+<meta property="og:title" content="Marvel Tang | The obvious is rarely the whole story">
+<meta property="og:description" content="Exploring the strategies behind brands, the psychology behind consumers, and the decisions that shape businesses.">
+<meta property="og:url" content="https://marveltang.com/">
+<meta property="og:image" content="https://marveltang.com/images/og.jpg"><!-- TODO: add a 1200x630 image -->
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/images/favicon.svg" type="image/svg+xml">
+<script>/* apply saved theme + concept before first paint (no flash) */
+try{var r=document.documentElement,t=localStorage.getItem("theme"),c=new URLSearchParams(location.search).get("concept");
+if(t)r.setAttribute("data-theme",t);if(c)r.setAttribute("data-concept",c)}catch(e){}</script>
+<link rel="stylesheet" href="/css/styles.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Person","name":"Marvel Tang","url":"https://marveltang.com/","description":"Marketing and Management student at HKUST writing about brands, consumer psychology and business strategy.","sameAs":["https://www.linkedin.com/in/tang-marvel-hkust2028","https://www.instagram.com/marvels.vista/"]}</script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
-  <!-- Top Glassmorphic Navigation Ribbon -->
-  <header class="nav-ribbon">
-    <div class="nav-container">
-      <a href="#home" class="brand-logo" onclick="switchTab('home')">MARVEL TANG</a>
-      <nav class="nav-links">
-        <button class="nav-btn active" id="btn-home" onclick="switchTab('home')">Home</button>
-        <button class="nav-btn" id="btn-blogs" onclick="switchTab('blogs')">Blogs</button>
-        <button class="nav-btn" id="btn-projects" onclick="switchTab('projects')">Projects</button>
-      </nav>
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="logo" href="/" aria-label="Marvel Tang, home">
+      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 24h26" stroke="var(--slate)" stroke-width="2"/></svg>
+      <span>marvel tang</span>
+    </a>
+    <nav id="menu" class="links" aria-label="Primary">
+      <a href="/" aria-current="page">Index</a>
+      <a href="/notes/">Notes</a>
+      <a href="/watch/">Watch</a>
+      <a href="/work-with-me/">Work with me</a>
+      <a href="/about/">About</a>
+    </nav>
+    <div class="tools">
+      <button id="theme" class="chip" type="button" aria-label="Theme: system"><span>system</span></button>
+      <button id="burger" class="chip burger" type="button" aria-expanded="false" aria-controls="menu" aria-label="Open menu">Menu</button>
     </div>
-  </header>
+  </div>
+</header>
 
-  <!-- Main Content Area -->
-  <main class="content-wrapper">
-
-    <!-- HOME VIEW -->
-    <section id="view-home" class="tab-view active">
-      <div class="hero-section">
-        <span class="badge">Portfolio & Creative Space</span>
-        <h1 class="hero-name">MARVEL TANG</h1>
-        <p class="hero-tagline">Inspiring Tomorrow Growing With Marvel</p>
-        
-        <!-- Dreamcore visual element -->
-        <div class="dreamcore-banner">
-          <div class="dreamcore-overlay"></div>
-          <div class="dreamcore-text">
-            <span>Rhythm & Soul</span>
-            <h2>Living and building at the intersection of marketing, culture, and code.</h2>
-          </div>
-        </div>
-
-        <p class="hero-bio">
-          Undergraduate student at HKUST studying Marketing and Management. Focused on marketing analytics, digital storytelling, automation workflows, and regional growth strategies.
-        </p>
+<main id="main">
+  <section class="wrap hero">
+    <div class="hero__copy">
+      <p class="mono" style="--i:0">Notes on brands, consumers and decisions</p>
+      <h1 style="--i:1">The obvious is rarely the whole story.</h1>
+      <p class="lead" style="--i:2">Exploring the strategies behind brands, the psychology behind consumers, and the decisions that shape businesses.</p>
+      <div class="actions" style="--i:3">
+        <a class="btn" href="#notes">Explore the latest thinking</a>
+        <a class="textlink" href="#newsletter">Join the newsletter</a>
       </div>
-
-      <div class="section-block">
-        <h2 class="section-title">What I Offer</h2>
-        <div class="cards-grid">
-          <div class="card">
-            <h3>Marketing Analytics & Strategy</h3>
-            <p>Data driven brand positioning, market segmentation research, and targeted recruitment strategies built for scale.</p>
-          </div>
-          <div class="card">
-            <h3>Automation & Tooling</h3>
-            <p>Streamlined execution pipelines using custom Python scripts, n8n workflows, and structured developer tools.</p>
-          </div>
-          <div class="card">
-            <h3>Content & Media Production</h3>
-            <p>High quality travel vlogs, digital assets, and interactive media experiences designed with extreme polish.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- BLOGS VIEW -->
-    <section id="view-blogs" class="tab-view">
-      <div class="page-header">
-        <h1>Blogs & Writings</h1>
-        <p>Thoughts on market analysis, workflow design, and regional explorations.</p>
-      </div>
-
-      <div class="list-container">
-        <article class="list-item">
-          <div class="item-meta">2026</div>
-          <div class="item-content">
-            <h3>Building High Engagement Content Strategy</h3>
-            <p>Comparing interactive polls versus video reels to maximize audience reach and engagement balance.</p>
-          </div>
-        </article>
-        <article class="list-item">
-          <div class="item-meta">2026</div>
-          <div class="item-content">
-            <h3>Travel Log Field Notes</h3>
-            <p>Documenting spatial aesthetics, regional itineraries, and visual production workflows across regional destinations.</p>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <!-- PROJECTS VIEW -->
-    <section id="view-projects" class="tab-view">
-      <div class="page-header">
-        <h1>Featured Projects</h1>
-        <p>Selected work across digital software, platforms, and interactive mapping.</p>
-      </div>
-
-      <div class="cards-grid">
-        <div class="card">
-          <div class="card-tag">Platform</div>
-          <h3>Project Threadshare</h3>
-          <p>Peer to peer clothing trading web application built to foster sustainable garment circulation.</p>
-        </div>
-        <div class="card">
-          <div class="card-tag">Spatial App</div>
-          <h3>MinglePort</h3>
-          <p>Mapping specialty coffee spots with open spatial data combined with community conversation starters.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Newsletter Section -->
-    <section class="newsletter-block">
-      <div class="newsletter-card">
-        <h2>Stay Connected</h2>
-        <p>Subscribe to receive occasional updates on marketing strategies, tech experiments, and new project launches.</p>
-        <form class="newsletter-form" onsubmit="event.preventDefault(); alert('Subscribed successfully!');">
-          <input type="email" placeholder="Enter your email address" required />
-          <button type="submit">Subscribe</button>
-        </form>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- Global Footer -->
-  <footer class="global-footer">
-    <div class="footer-container">
-      <p class="footer-copyright">&copy; 2026 Marvel Tang. All rights reserved.</p>
-      <div class="footer-links">
-        <a href="https://www.linkedin.com/in/tang-marvel-hkust2028" target="_blank" rel="noopener">LinkedIn</a>
-        <a href="mailto:marveltang71@gmail.com">marveltang71@gmail.com</a>
-      </div>
+      <ul class="cats mono" aria-label="Categories">
+        <li>Brand investigations</li><li>Consumer psychology</li><li>Strategy notes</li><li>Field notes</li>
+      </ul>
     </div>
-  </footer>
+    <div class="art" aria-hidden="true"><div class="orb"></div></div>
+  </section>
 
-  <script>
-    function switchTab(tabName) {
-      document.querySelectorAll('.tab-view').forEach(view => {
-        view.classList.remove('active');
-      });
-      document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.remove('active');
-      });
+  <section class="wrap feature" aria-labelledby="f-title">
+    <div class="feature__media"><div class="orb orb--sm"></div></div>
+    <div class="feature__text">
+      <p class="mono">BI-001 / Peak or slop? / Brand investigation</p>
+      <h2 id="f-title">Does distribution prove marketing success?</h2>
+      <p>A first look at whether wide retail availability is evidence of good marketing, or simply evidence of negotiating power.</p>
+      <p class="meta mono">30 Oct 2026 · Brand investigations · 9 min read</p>
+      <a class="textlink" href="/notes/does-distribution-prove-marketing-success/">Read article</a>
+    </div>
+  </section>
 
-      document.getElementById(`view-${tabName}`).classList.add('active');
-      document.getElementById(`btn-${tabName}`).classList.add('active');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  </script>
+  <section id="notes" class="wrap" aria-labelledby="n-title">
+    <div class="head"><h2 id="n-title">Latest notes</h2><a class="textlink" href="/notes/">All notes</a></div>
+    <div class="grid">
+      <a class="card" href="/notes/"><div class="thumb m1"></div><p class="mono">Strategy notes</p><h3>Why do some brand extensions strengthen a brand while others weaken it?</h3></a>
+      <a class="card" href="/notes/"><div class="thumb m2"></div><p class="mono">Consumer psychology</p><h3>Why do consumers say one thing and buy another?</h3></a>
+      <a class="card" href="/notes/"><div class="thumb m3"></div><p class="mono">Brand investigations</p><h3>What does consumer sentiment reveal that financial reports do not?</h3></a>
+    </div>
+  </section>
+
+  <section id="newsletter" class="wrap news" aria-labelledby="s-title">
+    <div>
+      <p class="mono">The Notes Behind the Noise</p>
+      <h2 id="s-title">Thoughtful breakdowns, without generic marketing advice.</h2>
+      <p class="lead">Research, useful ideas, and practical analysis on brands, consumer behaviour, and business strategy.</p>
+    </div>
+    <form id="signup" action="#" method="post"><!-- TODO Phase 7: replace "#" with your Kit form URL -->
+      <label for="email" class="sr">Email address</label>
+      <div class="row"><input id="email" name="email_address" type="email" placeholder="you@example.com" autocomplete="email" required><button class="btn" type="submit">Subscribe</button></div>
+      <p class="fine">Email address only. Unsubscribe any time.</p>
+      <p id="msg" class="fine" role="status"></p>
+    </form>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <div><p class="logo"><span>marvel tang</span></p><p class="fine">An independent notebook on brands, consumers and strategy.</p></div>
+    <nav aria-label="Footer"><a href="/notes/">Notes</a><a href="/watch/">Watch</a><a href="/work-with-me/">Work with me</a><a href="/about/">About</a></nav>
+    <nav aria-label="Contact"><a href="https://www.linkedin.com/in/tang-marvel-hkust2028" rel="noopener" target="_blank">LinkedIn</a><a href="https://www.instagram.com/marvels.vista/" rel="noopener" target="_blank">Instagram</a><a href="mailto:marveltang71@gmail.com">marveltang71@gmail.com</a></nav>
+  </div>
+  <p class="wrap fine">&copy; <span id="yr">2026</span> Marvel Tang. <a href="#newsletter">Join the newsletter</a></p>
+</footer>
+
+<div class="dev" role="group" aria-label="Preview homepage concept (remove after choosing)">
+  <button data-c="horizon">A Horizon</button><button data-c="orbit">B Orbit</button><button data-c="archive">C Archive</button>
+</div>
+<script src="/js/main.js" defer></script>
 </body>
 </html>
