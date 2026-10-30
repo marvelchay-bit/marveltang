@@ -1,6 +1,9 @@
 name = "marveltang"
 compatibility_date = "2024-09-23"
 
+# Point Cloudflare to serve your root static files
+assets = { directory = "." }
+
 routes = [
   { pattern = "marveltang.com", custom_domain = true },
   { pattern = "www.marveltang.com", custom_domain = true }
