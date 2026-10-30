@@ -115,6 +115,27 @@ body {
   padding: 140px 40px 80px 40px;
 }
 
+/* Page Header */
+.page-header {
+  padding: 20px 0 40px 0;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 40px;
+}
+
+.page-header h1 {
+  font-size: clamp(2.2rem, 4vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 8px;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  margin-top: 12px;
+  max-width: 700px;
+}
+
 /* Hero Section */
 .hero-section {
   padding: 40px 0 80px 0;
@@ -139,7 +160,23 @@ body {
   color: var(--text-muted);
   max-width: 700px;
   line-height: 1.6;
-  margin-bottom: 40px;
+  margin-bottom: 30px;
+}
+
+/* Focus Tags */
+.focus-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 30px;
+}
+
+.tag-pill {
+  background: var(--soft-silver);
+  padding: 6px 12px;
+  border-radius: 4px;
+  color: var(--text-main);
+  font-weight: 500;
 }
 
 /* Dreamcore Banner */
@@ -220,11 +257,17 @@ body {
   margin-top: 6px;
 }
 
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 30px;
+}
+
 .featured-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  padding: 50px;
+  padding: 40px;
   transition: var(--transition-smooth);
 }
 
@@ -243,20 +286,20 @@ body {
 }
 
 .featured-card h3 {
-  font-size: 2rem;
+  font-size: 1.6rem;
   font-weight: 700;
   margin-bottom: 16px;
   letter-spacing: -0.02em;
 }
 
 .featured-card p {
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: var(--text-muted);
-  max-width: 800px;
-  margin-bottom: 30px;
+  line-height: 1.6;
+  margin-bottom: 24px;
 }
 
-/* Spatial Embed Container */
+/* Embed Containers (Spatial & YouTube) */
 .embed-container {
   width: 100%;
   height: 520px;
@@ -375,7 +418,7 @@ body {
   color: var(--text-main);
 }
 
-.footer-bottom {
+ subterranean-bottom, .footer-bottom {
   max-width: 1200px;
   margin: 0 auto;
   border-top: 1px solid var(--border-color);
