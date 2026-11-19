@@ -41,6 +41,16 @@ function cloneState(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function isStudioUiNode(el) {
+  if (!el || !(el instanceof Element)) return false;
+  return Boolean(
+    el.closest('#canva-top-bar') ||
+      el.closest('#canva-format-bar') ||
+      el.closest('#canva-left-rail') ||
+      el.closest('#canva-side-panel')
+  );
+}
+
 function extractYouTubeId(urlOrId = '') {
   const trimmed = urlOrId.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
@@ -107,13 +117,13 @@ function captureDomState() {
 
   const texts = {};
   document.querySelectorAll('[data-edit-text]').forEach((el) => {
-    if (!el.closest('#admin-left-dock') && !el.closest('#floating-format-ribbon')) {
+    if (!isStudioUiNode(el)) {
       texts[el.dataset.editText] = el.innerHTML.trim();
     }
   });
 
   const colors = { ...(editorState.colors || {}) };
-  document.querySelectorAll('#admin-left-dock input[type="color"][data-css-var]').forEach((input) => {
+  document.querySelectorAll('#canva-side-panel input[type="color"][data-css-var]').forEach((input) => {
     colors[input.dataset.cssVar] = input.value;
   });
 
@@ -146,6 +156,32 @@ function pushUndoSnapshot() {
   redoStack = [];
 }
 
+function selectEditableElement(el, styleKey) {
+  if (activeEditableEl && activeEditableEl !== el) {
+    activeEditableEl.classList.remove('studio-selected-box');
+  }
+  activeEditableEl = el;
+  activeStyleKey = styleKey;
+  if (el) {
+    el.classList.add('studio-selected-box');
+    syncFormatBarToElement(el, styleKey);
+  }
+}
+
+function syncFormatBarToElement(el, styleKey) {
+  const bar = document.getElementById('canva-format-bar');
+  if (!bar || !el) return;
+  const st = editorState.textStyles?.[styleKey] || {};
+  const computedPx = parseInt(getComputedStyle(el).fontSize, 10) || 18;
+
+  bar.querySelector('#fmt-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#1e2229');
+  bar.querySelector('#fmt-drop-color').value = rgbOrHexToHex(st.dropColor || '', '#f5f3ff');
+  bar.querySelector('#fmt-font-family').value = st.fontFamily || '';
+  bar.querySelector('#fmt-font-size').value = st.fontSize || computedPx;
+  bar.querySelector('#fmt-effect').value = st.effect || 'none';
+  bar.querySelector('#fmt-animation').value = st.animation || 'none';
+}
+
 function renderDynamicBlocks(blocks, isEditMode) {
   const container = document.getElementById('dynamic-blocks-container');
   if (!container) return;
@@ -160,7 +196,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
     wrapper.dataset.blockId = block.id;
 
     const removeBtnHtml = isEditMode
-      ? `<button type="button" data-remove-block="${block.id}" style="float:right;font-size:0.74rem;padding:4px 8px;cursor:pointer;border-radius:6px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-main);">Remove</button>`
+      ? `<button type="button" data-remove-block="${block.id}" style="float:right;font-size:0.74rem;padding:4px 8px;cursor:pointer;border-radius:6px;border:1px solid #d5dae2;background:#fff;color:#1e2229;">Remove</button>`
       : '';
 
     const styleKeyPrefix = `block:${block.id}`;
@@ -398,12 +434,11 @@ function renderDynamicBlocks(blocks, isEditMode) {
 
     if (isEditMode) {
       wrapper.querySelectorAll('[contenteditable="true"]').forEach((editable) => {
+        const fKey = editable.dataset.styleKey || `block:${block.id}:${editable.dataset.blockField || editable.dataset.refText || 'text'}`;
+        editable.dataset.styleKey = fKey;
         editable.addEventListener('focus', () => {
           pushUndoSnapshot();
-          activeEditableEl = editable;
-          activeStyleKey = editable.dataset.styleKey || `block:${block.id}:${editable.dataset.blockField || editable.dataset.refText || 'text'}`;
-          editable.dataset.styleKey = activeStyleKey;
-          showFloatingRibbon(editable, activeStyleKey);
+          selectEditableElement(editable, fKey);
         });
         editable.addEventListener('input', () => {
           editorState = captureDomState();
@@ -510,7 +545,7 @@ function applyStateToDom(state, isEditMode) {
 
   Object.entries(state.colors || {}).forEach(([cssVar, value]) => {
     document.documentElement.style.setProperty(cssVar, value);
-    const picker = document.querySelector(`#admin-left-dock input[data-css-var="${cssVar}"]`);
+    const picker = document.querySelector(`#canva-side-panel input[data-css-var="${cssVar}"]`);
     if (picker) picker.value = value;
   });
 
@@ -581,7 +616,7 @@ async function loadSavedSiteContent(isEditMode = false) {
 }
 
 async function saveNow() {
-  const statusEl = document.getElementById('save-status-msg');
+  const statusEl = document.getElementById('canva-save-status');
   editorState = captureDomState();
   const payloadContent = cloneState(editorState);
 
@@ -602,12 +637,12 @@ async function saveNow() {
     console.error('Supabase save error:', error);
     if (statusEl) statusEl.textContent = `Save failed: ${error.message}`;
   } else if (statusEl) {
-    statusEl.textContent = `Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    statusEl.textContent = `Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }
 }
 
 function scheduleAutoSave() {
-  const statusEl = document.getElementById('save-status-msg');
+  const statusEl = document.getElementById('canva-save-status');
   if (statusEl) statusEl.textContent = 'Unsaved changes...';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
@@ -639,92 +674,6 @@ async function getAuthenticatedSession() {
   return null;
 }
 
-function buildFloatingRibbon() {
-  const ribbon = document.createElement('div');
-  ribbon.id = 'floating-format-ribbon';
-  ribbon.innerHTML = `
-    <span class="mono" style="color:#C9D8E5;">STYLE</span>
-    <label title="Text Color">Text <input type="color" id="rib-text-color" value="#202124"></label>
-    <label title="Drop / Highlight Color">Drop <input type="color" id="rib-drop-color" value="#f5f5f2"></label>
-    <select id="rib-font-family" title="Font">
-      <option value="">Default Font</option>
-      <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
-      <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
-      <option value="Georgia, serif">Georgia</option>
-    </select>
-    <input type="number" id="rib-font-size" min="12" max="96" placeholder="px" title="Font Size (px)" style="width:56px;">
-    <select id="rib-effect" title="Visual Effect">
-      <option value="none">Effect: None</option>
-      <option value="shadow">Shadow</option>
-      <option value="neon">Neon</option>
-      <option value="outline">Outline</option>
-    </select>
-    <select id="rib-animation" title="Animation">
-      <option value="none">Anim: None</option>
-      <option value="fade-in">Fade In</option>
-      <option value="type">Type</option>
-    </select>
-    <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
-    <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
-    <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
-    <button type="button" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
-    <button type="button" id="rib-cite-btn" title="Embed Reference Marker">Embed Ref [#]</button>
-  `;
-  document.body.appendChild(ribbon);
-
-  const updateCurrentStyle = (patch) => {
-    if (!activeEditableEl || !activeStyleKey) return;
-    pushUndoSnapshot();
-    const existing = editorState.textStyles[activeStyleKey] || {};
-    const nextStyle = { ...existing, ...patch };
-    editorState.textStyles[activeStyleKey] = nextStyle;
-    applyElementStyle(activeEditableEl, nextStyle);
-    editorState = captureDomState();
-    scheduleAutoSave();
-  };
-
-  ribbon.querySelector('#rib-text-color').addEventListener('input', (e) => updateCurrentStyle({ color: e.target.value }));
-  ribbon.querySelector('#rib-drop-color').addEventListener('input', (e) => updateCurrentStyle({ dropColor: e.target.value }));
-  ribbon.querySelector('#rib-font-family').addEventListener('change', (e) => updateCurrentStyle({ fontFamily: e.target.value }));
-  ribbon.querySelector('#rib-font-size').addEventListener('change', (e) => updateCurrentStyle({ fontSize: Number(e.target.value) || '' }));
-  ribbon.querySelector('#rib-effect').addEventListener('change', (e) => updateCurrentStyle({ effect: e.target.value }));
-  ribbon.querySelector('#rib-animation').addEventListener('change', (e) => updateCurrentStyle({ animation: e.target.value }));
-
-  ribbon.querySelectorAll('[data-cmd]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pushUndoSnapshot();
-      document.execCommand(btn.dataset.cmd, false, null);
-      editorState = captureDomState();
-      scheduleAutoSave();
-    });
-  });
-
-  ribbon.querySelector('#rib-cite-btn').addEventListener('click', () => {
-    if (!activeEditableEl) return;
-    const refNum = prompt('Reference number to embed (e.g. 1):', '1');
-    if (!refNum) return;
-    pushUndoSnapshot();
-    const badgeHtml = `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:var(--slate-blue);font-weight:700;">[${refNum}]</sup>&nbsp;`;
-    document.execCommand('insertHTML', false, badgeHtml);
-    editorState = captureDomState();
-    scheduleAutoSave();
-  });
-
-  return ribbon;
-}
-
-function showFloatingRibbon(el, styleKey) {
-  const ribbon = document.getElementById('floating-format-ribbon');
-  if (!ribbon) return;
-  const st = editorState.textStyles?.[styleKey] || {};
-  ribbon.querySelector('#rib-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#202124');
-  ribbon.querySelector('#rib-font-family').value = st.fontFamily || '';
-  ribbon.querySelector('#rib-font-size').value = st.fontSize || '';
-  ribbon.querySelector('#rib-effect').value = st.effect || 'none';
-  ribbon.querySelector('#rib-animation').value = st.animation || 'none';
-  ribbon.style.display = 'flex';
-}
-
 document.addEventListener('DOMContentLoaded', async () => {
   const urlParams = new URLSearchParams(window.location.search);
   const isEditMode = urlParams.get('edit') === 'true';
@@ -754,30 +703,147 @@ document.addEventListener('DOMContentLoaded', async () => {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
 
-    enableLeftStudioEditor();
+    enableCanvaStudio();
   }
 });
 
-function enableLeftStudioEditor() {
+function enableCanvaStudio() {
+  document.body.classList.add('studio-active', 'studio-panel-open');
   editorState = captureDomState();
   undoStack = [cloneState(editorState)];
 
-  buildFloatingRibbon();
+  const computedStyles = getComputedStyle(document.documentElement);
 
-  const textTargets = document.querySelectorAll('[data-edit-text]');
-  textTargets.forEach((el) => {
-    if (el.closest('#admin-left-dock') || el.closest('#floating-format-ribbon')) return;
+  // 1. Top Bar
+  const topBar = document.createElement('header');
+  topBar.id = 'canva-top-bar';
+  topBar.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-weight:700;font-size:0.88rem;color:#6d28d9;">Studio</span>
+      <span class="mono" style="font-size:0.74rem;color:#6b7280;">${PAGE_ID}</span>
+      <button type="button" id="canva-undo-btn" title="Undo (Cmd+Z)">↶</button>
+      <button type="button" id="canva-redo-btn" title="Redo (Cmd+Y)">↷</button>
+      <span id="canva-save-status" class="mono" style="font-size:0.72rem;color:#6b7280;">Ready</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button type="button" id="canva-save-btn" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.78rem;cursor:pointer;">Save</button>
+      <a href="${window.location.pathname}" style="text-decoration:none;font-size:0.78rem;color:#374151;padding:6px 10px;border:1px solid #d5dae2;border-radius:6px;">View Site</a>
+    </div>
+  `;
+  document.body.appendChild(topBar);
+
+  // 2. Top Contextual Format Bar
+  const formatBar = document.createElement('div');
+  formatBar.id = 'canva-format-bar';
+  formatBar.innerHTML = `
+    <select id="fmt-font-family" title="Font">
+      <option value="">Font</option>
+      <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
+      <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+      <option value="Georgia, serif">Georgia</option>
+    </select>
+    <button type="button" id="fmt-size-dec" title="Decrease Size">−</button>
+    <input type="number" id="fmt-font-size" min="10" max="120" value="18" style="width:52px;text-align:center;" title="Font Size (px)">
+    <button type="button" id="fmt-size-inc" title="Increase Size">+</button>
+    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;">A <input type="color" id="fmt-text-color" value="#1e2229"></label>
+    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;">Drop <input type="color" id="fmt-drop-color" value="#f5f3ff"></label>
+    <button type="button" data-fmt-cmd="bold" title="Bold (Cmd+B)"><b>B</b></button>
+    <button type="button" data-fmt-cmd="italic" title="Italic (Cmd+I)"><i>I</i></button>
+    <button type="button" data-fmt-cmd="underline" title="Underline (Cmd+U)"><u>U</u></button>
+    <button type="button" data-fmt-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+    <select id="fmt-effect" title="Effects">
+      <option value="none">Effects</option>
+      <option value="shadow">Shadow</option>
+      <option value="neon">Neon</option>
+      <option value="outline">Outline</option>
+    </select>
+    <select id="fmt-animation" title="Animate">
+      <option value="none">Animate</option>
+      <option value="fade-in">Fade In</option>
+      <option value="type">Type</option>
+    </select>
+    <button type="button" id="fmt-embed-ref" title="Embed Reference [#]">+ Ref [#]</button>
+  `;
+  document.body.appendChild(formatBar);
+
+  // 3. Left Icon Rail
+  const leftRail = document.createElement('nav');
+  leftRail.id = 'canva-left-rail';
+  leftRail.innerHTML = `
+    <button type="button" class="canva-rail-btn active" data-panel="widgets"><span>❖</span><span>Widgets</span></button>
+    <button type="button" class="canva-rail-btn" data-panel="text"><span>T</span><span>Text</span></button>
+    <button type="button" class="canva-rail-btn" data-panel="uploads"><span>☁</span><span>Uploads</span></button>
+    <button type="button" class="canva-rail-btn" data-panel="theme"><span>◐</span><span>Theme</span></button>
+    <button type="button" class="canva-rail-btn" id="canva-collapse-btn" title="Collapse / Expand Panel" style="margin-top:auto;margin-bottom:10px;"><span>⟨</span><span>Hide</span></button>
+  `;
+  document.body.appendChild(leftRail);
+
+  // 4. Collapsible Left Side Panel
+  const sidePanel = document.createElement('aside');
+  sidePanel.id = 'canva-side-panel';
+  sidePanel.innerHTML = `
+    <div id="cpanel-widgets" class="cpanel-view">
+      <div style="font-weight:700;margin-bottom:10px;">Widgets</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button type="button" data-add-block="divider" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Horizontal Line</button>
+        <button type="button" data-add-block="pdf" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">PDF Embed</button>
+        <button type="button" data-add-block="author" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Author Card</button>
+        <button type="button" data-add-block="video" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">YouTube Video</button>
+        <button type="button" data-add-block="quiz" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Quiz</button>
+        <button type="button" data-add-block="survey" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Poll</button>
+        <button type="button" data-add-block="table" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Table</button>
+        <button type="button" data-add-block="chart" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Chart</button>
+        <button type="button" data-add-block="references" style="grid-column:span 2;padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;cursor:pointer;">References Section</button>
+      </div>
+    </div>
+
+    <div id="cpanel-text" class="cpanel-view" style="display:none;">
+      <div style="font-weight:700;margin-bottom:10px;">Add Text</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button type="button" data-add-text="h1" style="padding:12px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:1.25rem;font-weight:700;cursor:pointer;">Add Heading (H1)</button>
+        <button type="button" data-add-text="h2" style="padding:10px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:1.05rem;font-weight:600;cursor:pointer;">Add Subheading (H2)</button>
+        <button type="button" data-add-text="h3" style="padding:9px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:0.92rem;font-weight:600;cursor:pointer;">Add Title (H3)</button>
+        <button type="button" data-add-text="p" style="padding:8px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#fff;font-size:0.84rem;cursor:pointer;">Add normal text</button>
+      </div>
+    </div>
+
+    <div id="cpanel-uploads" class="cpanel-view" style="display:none;">
+      <div style="font-weight:700;margin-bottom:8px;">Uploads</div>
+      <input type="file" id="canva-upload-input" accept="image/*" style="width:100%;font-size:0.75rem;margin-bottom:12px;">
+      <div id="canva-uploads-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
+    </div>
+
+    <div id="cpanel-theme" class="cpanel-view" style="display:none;">
+      <div style="font-weight:700;margin-bottom:10px;">Theme & Pages</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
+      </div>
+      <div style="border-top:1px solid #e2e5ea;padding-top:12px;">
+        <div style="font-weight:600;font-size:0.78rem;margin-bottom:6px;">Create New Page</div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="canva-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #d5dae2;border-radius:6px;">
+          <button type="button" id="canva-create-page" style="padding:6px 10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sidePanel);
+
+  // Make static [data-edit-text] elements editable and selectable
+  document.querySelectorAll('[data-edit-text]').forEach((el) => {
+    if (isStudioUiNode(el)) return;
     const sKey = el.dataset.editText;
     el.dataset.styleKey = sKey;
     el.contentEditable = 'true';
-    el.style.outline = '1px dashed #71869A';
+    el.style.outline = '1px dashed rgba(124, 58, 237, 0.45)';
     el.style.outlineOffset = '4px';
 
     el.addEventListener('focus', () => {
       pushUndoSnapshot();
-      activeEditableEl = el;
-      activeStyleKey = sKey;
-      showFloatingRibbon(el, sKey);
+      selectEditableElement(el, sKey);
     });
 
     el.addEventListener('input', () => {
@@ -786,168 +852,163 @@ function enableLeftStudioEditor() {
     });
   });
 
-  const computedStyles = getComputedStyle(document.documentElement);
+  // Format bar actions
+  const patchActiveStyle = (patch) => {
+    if (!activeEditableEl || !activeStyleKey) return;
+    pushUndoSnapshot();
+    const next = { ...(editorState.textStyles[activeStyleKey] || {}), ...patch };
+    editorState.textStyles[activeStyleKey] = next;
+    applyElementStyle(activeEditableEl, next);
+    editorState = captureDomState();
+    scheduleAutoSave();
+  };
 
-  const dock = document.createElement('aside');
-  dock.id = 'admin-left-dock';
-  dock.innerHTML = `
-    <button type="button" id="dock-toggle-btn" title="Minimize / Open Studio" style="position:fixed;top:90px;left:12px;z-index:100001;background:#202124;color:#C9D8E5;border:1px solid #343D47;border-radius:8px;padding:7px 11px;font-family:'JetBrains Mono',monospace;font-size:0.74rem;font-weight:600;cursor:pointer;box-shadow:0 8px 20px rgba(0,0,0,0.25);">
-      ◀ Studio
-    </button>
+  formatBar.querySelector('#fmt-font-family').addEventListener('change', (e) => patchActiveStyle({ fontFamily: e.target.value }));
+  formatBar.querySelector('#fmt-font-size').addEventListener('change', (e) => patchActiveStyle({ fontSize: Number(e.target.value) || 18 }));
+  formatBar.querySelector('#fmt-size-inc').addEventListener('click', () => {
+    const input = formatBar.querySelector('#fmt-font-size');
+    const val = (Number(input.value) || 18) + 2;
+    input.value = val;
+    patchActiveStyle({ fontSize: val });
+  });
+  formatBar.querySelector('#fmt-size-dec').addEventListener('click', () => {
+    const input = formatBar.querySelector('#fmt-font-size');
+    const val = Math.max(10, (Number(input.value) || 18) - 2);
+    input.value = val;
+    patchActiveStyle({ fontSize: val });
+  });
+  formatBar.querySelector('#fmt-text-color').addEventListener('input', (e) => patchActiveStyle({ color: e.target.value }));
+  formatBar.querySelector('#fmt-drop-color').addEventListener('input', (e) => patchActiveStyle({ dropColor: e.target.value }));
+  formatBar.querySelector('#fmt-effect').addEventListener('change', (e) => patchActiveStyle({ effect: e.target.value }));
+  formatBar.querySelector('#fmt-animation').addEventListener('change', (e) => patchActiveStyle({ animation: e.target.value }));
 
-    <div id="dock-drawer-panel" style="position:fixed;top:130px;left:12px;width:296px;max-height:calc(100vh - 150px);overflow-y:auto;z-index:100000;background:#202124;color:#F5F5F2;border:1px solid #343D47;border-radius:14px;padding:14px;box-shadow:0 14px 36px rgba(0,0,0,0.35);font-family:'Plus Jakarta Sans',sans-serif;font-size:0.82rem;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#C9D8E5;font-weight:600;">${PAGE_ID}</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button type="button" id="undo-btn" title="Undo (Cmd+Z)" style="padding:3px 7px;cursor:pointer;border-radius:5px;border:none;">Undo</button>
-          <button type="button" id="redo-btn" title="Redo (Cmd+Y)" style="padding:3px 7px;cursor:pointer;border-radius:5px;border:none;">Redo</button>
-          <a href="${window.location.pathname}" style="color:#9aa0a6;text-decoration:none;font-size:0.74rem;">Exit</a>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;background:#15191F;padding:4px;border-radius:8px;margin-bottom:12px;">
-        <button type="button" class="dock-tab-btn" data-dtab="widgets" style="padding:6px;border:none;border-radius:6px;background:#C9D8E5;color:#202124;font-weight:700;cursor:pointer;font-size:0.74rem;">Widgets</button>
-        <button type="button" class="dock-tab-btn" data-dtab="uploads" style="padding:6px;border:none;border-radius:6px;background:transparent;color:#F1F2F0;font-weight:600;cursor:pointer;font-size:0.74rem;">Uploads</button>
-        <button type="button" class="dock-tab-btn" data-dtab="theme" style="padding:6px;border:none;border-radius:6px;background:transparent;color:#F1F2F0;font-weight:600;cursor:pointer;font-size:0.74rem;">Theme/Pg</button>
-      </div>
-
-      <div id="dtab-widgets" class="dock-tab-panel">
-        <div class="mono" style="margin-bottom:6px;color:#C9D8E5;">Text & Structure</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <button type="button" data-insert-widget="h1" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ H1</button>
-          <button type="button" data-insert-widget="h2" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ H2</button>
-          <button type="button" data-insert-widget="h3" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ H3</button>
-          <button type="button" data-insert-widget="p" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Normal Text</button>
-          <button type="button" data-insert-widget="divider" style="grid-column:span 2;padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Horizontal Line</button>
-        </div>
-
-        <div class="mono" style="margin-bottom:6px;color:#C9D8E5;">Media & Blocks</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-          <button type="button" data-insert-widget="pdf" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ PDF</button>
-          <button type="button" data-insert-widget="author" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Author</button>
-          <button type="button" data-insert-widget="video" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Video (YT)</button>
-          <button type="button" data-insert-widget="image-block" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Image</button>
-        </div>
-
-        <div class="mono" style="margin-bottom:6px;color:#C9D8E5;">Interactive & Data</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-          <button type="button" data-insert-widget="quiz" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Quiz</button>
-          <button type="button" data-insert-widget="survey" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Poll</button>
-          <button type="button" data-insert-widget="table" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Table</button>
-          <button type="button" data-insert-widget="chart" style="padding:6px;cursor:pointer;border-radius:6px;border:none;">+ Chart</button>
-          <button type="button" data-insert-widget="references" style="grid-column:span 2;padding:6px;cursor:pointer;border-radius:6px;border:none;">+ References Section</button>
-        </div>
-      </div>
-
-      <div id="dtab-uploads" class="dock-tab-panel" style="display:none;">
-        <label class="mono" style="display:block;margin-bottom:6px;color:#C9D8E5;">Upload New Photo</label>
-        <input type="file" id="dock-upload-file" accept="image/*" style="width:100%;font-size:0.75rem;margin-bottom:10px;">
-        <div class="mono" style="margin-bottom:6px;color:#C9D8E5;">Previous Uploads (Click to Insert)</div>
-        <div id="uploads-gallery-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
-      </div>
-
-      <div id="dtab-theme" class="dock-tab-panel" style="display:none;">
-        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
-          <label style="display:flex;justify-content:space-between;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
-          <label style="display:flex;justify-content:space-between;"><span>Main Text</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
-          <label style="display:flex;justify-content:space-between;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
-          <label style="display:flex;justify-content:space-between;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
-        </div>
-        <div style="border-top:1px solid #343D47;padding-top:10px;">
-          <label class="mono" style="display:block;margin-bottom:4px;color:#C9D8E5;">New Page Slug</label>
-          <div style="display:flex;gap:6px;">
-            <input type="text" id="new-page-slug" placeholder="notes" style="flex:1;padding:6px;border-radius:6px;border:1px solid #343D47;background:#15191F;color:#fff;">
-            <button type="button" id="create-page-btn" style="padding:6px 10px;cursor:pointer;border-radius:6px;border:none;">Create</button>
-          </div>
-        </div>
-      </div>
-
-      <button type="button" id="save-now-btn" style="width:100%;margin-top:12px;padding:8px;border:none;border-radius:8px;background:#C9D8E5;color:#202124;font-weight:700;cursor:pointer;">Save Now</button>
-      <span id="save-status-msg" style="display:block;margin-top:6px;font-size:0.72rem;text-align:center;color:#C9D8E5;">Auto-save active</span>
-    </div>
-  `;
-  document.body.appendChild(dock);
-
-  const panelEl = dock.querySelector('#dock-drawer-panel');
-  const toggleBtn = dock.querySelector('#dock-toggle-btn');
-  let isMinimized = false;
-
-  toggleBtn.addEventListener('click', () => {
-    isMinimized = !isMinimized;
-    panelEl.style.display = isMinimized ? 'none' : 'block';
-    toggleBtn.textContent = isMinimized ? '▶ Studio' : '◀ Studio';
+  formatBar.querySelectorAll('[data-fmt-cmd]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pushUndoSnapshot();
+      document.execCommand(btn.dataset.fmtCmd, false, null);
+      editorState = captureDomState();
+      scheduleAutoSave();
+    });
   });
 
-  const renderUploadsGallery = () => {
-    const grid = dock.querySelector('#uploads-gallery-grid');
+  formatBar.querySelector('#fmt-embed-ref').addEventListener('click', () => {
+    if (!activeEditableEl) return;
+    const refNum = prompt('Reference number to embed (e.g. 1):', '1');
+    if (!refNum) return;
+    pushUndoSnapshot();
+    document.execCommand('insertHTML', false, `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#6d28d9;font-weight:700;">[${refNum}]</sup>&nbsp;`);
+    editorState = captureDomState();
+    scheduleAutoSave();
+  });
+
+  // Rail switching & collapse
+  const railBtns = leftRail.querySelectorAll('.canva-rail-btn[data-panel]');
+  const panelViews = sidePanel.querySelectorAll('.cpanel-view');
+  railBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.body.classList.add('studio-panel-open');
+      railBtns.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      panelViews.forEach((v) => (v.style.display = 'none'));
+      sidePanel.querySelector(`#cpanel-${btn.dataset.panel}`).style.display = 'block';
+    });
+  });
+
+  leftRail.querySelector('#canva-collapse-btn').addEventListener('click', () => {
+    document.body.classList.toggle('studio-panel-open');
+  });
+
+  // Add text nodes
+  sidePanel.querySelectorAll('[data-add-text]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pushUndoSnapshot();
+      editorState = captureDomState();
+      const tag = btn.dataset.addText;
+      editorState.blocks.push({
+        id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        type: 'text-node',
+        tag,
+        content: tag === 'p' ? 'New paragraph text...' : `New ${tag.toUpperCase()} heading`
+      });
+      renderDynamicBlocks(editorState.blocks, true);
+      scheduleAutoSave();
+    });
+  });
+
+  // Add widgets
+  sidePanel.querySelectorAll('[data-add-block]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pushUndoSnapshot();
+      editorState = captureDomState();
+      const bType = btn.dataset.addBlock;
+      const newBlock = { id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`, type: bType };
+
+      if (bType === 'video') {
+        newBlock.ytUrl = prompt('YouTube URL or Video ID:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || '';
+        newBlock.autoplay = false;
+        newBlock.title = 'Featured Video';
+      } else if (bType === 'pdf') {
+        newBlock.pdfUrl = prompt('PDF URL or Google Drive link:', '') || '';
+        newBlock.title = 'Attached PDF';
+      } else if (bType === 'chart') {
+        const labels = prompt('Chart labels (comma-separated):', 'Jan, Feb, Mar, Apr') || 'Jan, Feb, Mar';
+        const values = prompt('Chart numbers (comma-separated):', '12, 24, 18, 32') || '12, 24, 18';
+        newBlock.labels = labels.split(',').map((s) => s.trim());
+        newBlock.values = values.split(',').map((n) => Number(n.trim()) || 0);
+      }
+
+      editorState.blocks.push(newBlock);
+      renderDynamicBlocks(editorState.blocks, true);
+      scheduleAutoSave();
+    });
+  });
+
+  // Uploads gallery & file upload
+  const renderUploads = () => {
+    const grid = sidePanel.querySelector('#canva-uploads-grid');
     if (!grid) return;
     const list = editorState.uploads || [];
     if (!list.length) {
-      grid.innerHTML = `<span class="mono" style="grid-column:span 2;color:#9aa0a6;">No photos yet.</span>`;
+      grid.innerHTML = `<span class="mono" style="grid-column:span 2;color:#6b7280;font-size:0.74rem;">No photos uploaded yet.</span>`;
       return;
     }
     grid.innerHTML = list
       .map(
         (u) => `
-      <div style="background:#15191F;border:1px solid #343D47;border-radius:6px;padding:4px;text-align:center;">
-        <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:58px;object-fit:cover;border-radius:4px;display:block;margin-bottom:4px;">
-        <button type="button" data-use-upload="${u.url}" style="width:100%;padding:3px;font-size:0.7rem;cursor:pointer;border:none;border-radius:4px;">Insert</button>
+      <div style="border:1px solid #e2e5ea;border-radius:8px;padding:4px;text-align:center;background:#fafafa;">
+        <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:60px;object-fit:cover;border-radius:6px;display:block;margin-bottom:4px;">
+        <button type="button" data-insert-photo="${u.url}" style="width:100%;padding:4px;font-size:0.7rem;border:1px solid #d5dae2;border-radius:5px;background:#fff;cursor:pointer;">Insert</button>
       </div>`
       )
       .join('');
 
-    grid.querySelectorAll('[data-use-upload]').forEach((btn) => {
+    grid.querySelectorAll('[data-insert-photo]').forEach((btn) => {
       btn.addEventListener('click', () => {
         pushUndoSnapshot();
         editorState.blocks.push({
           id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
           type: 'image-block',
-          src: btn.dataset.useUpload,
-          caption: 'Uploaded visual'
+          src: btn.dataset.insertPhoto,
+          caption: 'Uploaded photo'
         });
         renderDynamicBlocks(editorState.blocks, true);
         scheduleAutoSave();
       });
     });
   };
-  renderUploadsGallery();
+  renderUploads();
 
-  const tabBtns = dock.querySelectorAll('.dock-tab-btn');
-  const tabPanels = dock.querySelectorAll('.dock-tab-panel');
-  tabBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      tabBtns.forEach((b) => {
-        b.style.background = 'transparent';
-        b.style.color = '#F1F2F0';
-      });
-      btn.style.background = '#C9D8E5';
-      btn.style.color = '#202124';
-      tabPanels.forEach((p) => (p.style.display = 'none'));
-      dock.querySelector(`#dtab-${btn.dataset.dtab}`).style.display = 'block';
-    });
-  });
-
-  dock.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
-    input.addEventListener('input', (e) => {
-      pushUndoSnapshot();
-      document.documentElement.style.setProperty(e.target.dataset.cssVar, e.target.value);
-      editorState.colors[e.target.dataset.cssVar] = e.target.value;
-      scheduleAutoSave();
-    });
-  });
-
-  dock.querySelector('#dock-upload-file').addEventListener('change', async (e) => {
+  sidePanel.querySelector('#canva-upload-input').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const statusEl = dock.querySelector('#save-status-msg');
-    statusEl.textContent = 'Uploading photo...';
+    const statusEl = topBar.querySelector('#canva-save-status');
+    statusEl.textContent = 'Uploading...';
 
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filePath = `upload-${Date.now()}-${safeName}`;
-
     const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(filePath, file, { upsert: true });
     if (error) {
-      statusEl.textContent = `Upload failed: ${error.message}`;
+      statusEl.textContent = `Upload error: ${error.message}`;
       return;
     }
 
@@ -963,61 +1024,27 @@ function enableLeftStudioEditor() {
       src: pub.publicUrl,
       caption: safeName
     });
-
-    renderUploadsGallery();
+    renderUploads();
     renderDynamicBlocks(editorState.blocks, true);
     await saveNow();
   });
 
-  dock.querySelectorAll('[data-insert-widget]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+  // Theme & Create Page
+  sidePanel.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
+    input.addEventListener('input', (e) => {
       pushUndoSnapshot();
-      editorState = captureDomState();
-      const wType = btn.dataset.insertWidget;
-      const newBlock = {
-        id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`
-      };
-
-      if (['h1', 'h2', 'h3', 'p'].includes(wType)) {
-        newBlock.type = 'text-node';
-        newBlock.tag = wType;
-        newBlock.content = wType === 'p' ? 'New paragraph text...' : `New ${wType.toUpperCase()} heading`;
-      } else if (wType === 'video') {
-        const ytUrl = prompt('Paste YouTube URL or Video ID:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || '';
-        newBlock.type = 'video';
-        newBlock.ytUrl = ytUrl;
-        newBlock.autoplay = false;
-        newBlock.title = 'Featured Video';
-      } else if (wType === 'pdf') {
-        const pdfUrl = prompt('Paste PDF URL or Google Drive link:', '') || '';
-        newBlock.type = 'pdf';
-        newBlock.pdfUrl = pdfUrl;
-        newBlock.title = 'Attached PDF';
-      } else if (wType === 'chart') {
-        const rawLabels = prompt('Chart labels (comma-separated):', 'Jan, Feb, Mar, Apr') || 'Jan, Feb, Mar';
-        const rawValues = prompt('Chart numbers (comma-separated):', '12, 24, 18, 32') || '12, 24, 18';
-        newBlock.type = 'chart';
-        newBlock.labels = rawLabels.split(',').map((s) => s.trim());
-        newBlock.values = rawValues.split(',').map((n) => Number(n.trim()) || 0);
-      } else {
-        newBlock.type = wType;
-      }
-
-      editorState.blocks.push(newBlock);
-      renderDynamicBlocks(editorState.blocks, true);
+      document.documentElement.style.setProperty(e.target.dataset.cssVar, e.target.value);
+      editorState.colors[e.target.dataset.cssVar] = e.target.value;
       scheduleAutoSave();
     });
   });
 
-  dock.querySelector('#create-page-btn').addEventListener('click', async () => {
-    const slugInput = dock.querySelector('#new-page-slug');
-    const slug = slugInput.value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+  sidePanel.querySelector('#canva-create-page').addEventListener('click', async () => {
+    const slug = sidePanel.querySelector('#canva-new-slug').value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
     if (!slug) return;
-
-    const targetPageId = `page:${slug}`;
     await supabase.from('site_content').upsert(
       {
-        id: targetPageId,
+        id: `page:${slug}`,
         content: {
           texts: {},
           textStyles: {},
@@ -1031,13 +1058,13 @@ function enableLeftStudioEditor() {
       },
       { onConflict: 'id' }
     );
-
     const url = new URL(window.location.href);
     url.searchParams.set('page', slug);
     url.searchParams.set('edit', 'true');
     window.location.href = url.toString();
   });
 
+  // Undo / Redo / Save
   const handleUndo = () => {
     if (!undoStack.length) return;
     redoStack.push(captureDomState());
@@ -1060,15 +1087,14 @@ function enableLeftStudioEditor() {
     scheduleAutoSave();
   };
 
-  dock.querySelector('#undo-btn').addEventListener('click', handleUndo);
-  dock.querySelector('#redo-btn').addEventListener('click', handleRedo);
-  dock.querySelector('#save-now-btn').addEventListener('click', saveNow);
+  topBar.querySelector('#canva-undo-btn').addEventListener('click', handleUndo);
+  topBar.querySelector('#canva-redo-btn').addEventListener('click', handleRedo);
+  topBar.querySelector('#canva-save-btn').addEventListener('click', saveNow);
 
   document.addEventListener(
     'keydown',
     (e) => {
-      const isMod = e.metaKey || e.ctrlKey;
-      if (!isMod) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
