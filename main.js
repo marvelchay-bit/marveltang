@@ -382,7 +382,6 @@ function renderDynamicBlocks(blocks, isEditMode) {
       `;
     }
 
-    // Allow clicking [Ref #] inline badges anywhere to jump to and highlight that reference
     wrapper.querySelectorAll('.ref-inline-badge').forEach((badge) => {
       badge.addEventListener('click', () => {
         const num = badge.dataset.refNum;
@@ -558,7 +557,6 @@ async function loadSavedSiteContent(isEditMode = false) {
       }
     }
 
-    // Also pull previous uploads from storage bucket if available
     const { data: bucketFiles } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 50 });
     if (Array.isArray(bucketFiles) && bucketFiles.length > 0) {
       const fromBucket = bucketFiles
@@ -701,7 +699,6 @@ function buildFloatingRibbon() {
     });
   });
 
-  // Embed inline [Ref #] badge directly inside text
   ribbon.querySelector('#rib-cite-btn').addEventListener('click', () => {
     if (!activeEditableEl) return;
     const refNum = prompt('Reference number to embed (e.g. 1):', '1');
@@ -814,7 +811,6 @@ function enableLeftStudioEditor() {
         <button type="button" class="dock-tab-btn" data-dtab="theme" style="padding:6px;border:none;border-radius:6px;background:transparent;color:#F1F2F0;font-weight:600;cursor:pointer;font-size:0.74rem;">Theme/Pg</button>
       </div>
 
-      <!-- WIDGETS TAB -->
       <div id="dtab-widgets" class="dock-tab-panel">
         <div class="mono" style="margin-bottom:6px;color:#C9D8E5;">Text & Structure</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
@@ -843,7 +839,6 @@ function enableLeftStudioEditor() {
         </div>
       </div>
 
-      <!-- UPLOADS TAB -->
       <div id="dtab-uploads" class="dock-tab-panel" style="display:none;">
         <label class="mono" style="display:block;margin-bottom:6px;color:#C9D8E5;">Upload New Photo</label>
         <input type="file" id="dock-upload-file" accept="image/*" style="width:100%;font-size:0.75rem;margin-bottom:10px;">
@@ -851,7 +846,6 @@ function enableLeftStudioEditor() {
         <div id="uploads-gallery-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
       </div>
 
-      <!-- THEME & NEW PAGE TAB -->
       <div id="dtab-theme" class="dock-tab-panel" style="display:none;">
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
           <label style="display:flex;justify-content:space-between;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
@@ -893,3 +887,205 @@ function enableLeftStudioEditor() {
       return;
     }
     grid.innerHTML = list
+      .map(
+        (u) => `
+      <div style="background:#15191F;border:1px solid #343D47;border-radius:6px;padding:4px;text-align:center;">
+        <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:58px;object-fit:cover;border-radius:4px;display:block;margin-bottom:4px;">
+        <button type="button" data-use-upload="${u.url}" style="width:100%;padding:3px;font-size:0.7rem;cursor:pointer;border:none;border-radius:4px;">Insert</button>
+      </div>`
+      )
+      .join('');
+
+    grid.querySelectorAll('[data-use-upload]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        pushUndoSnapshot();
+        editorState.blocks.push({
+          id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          type: 'image-block',
+          src: btn.dataset.useUpload,
+          caption: 'Uploaded visual'
+        });
+        renderDynamicBlocks(editorState.blocks, true);
+        scheduleAutoSave();
+      });
+    });
+  };
+  renderUploadsGallery();
+
+  const tabBtns = dock.querySelectorAll('.dock-tab-btn');
+  const tabPanels = dock.querySelectorAll('.dock-tab-panel');
+  tabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach((b) => {
+        b.style.background = 'transparent';
+        b.style.color = '#F1F2F0';
+      });
+      btn.style.background = '#C9D8E5';
+      btn.style.color = '#202124';
+      tabPanels.forEach((p) => (p.style.display = 'none'));
+      dock.querySelector(`#dtab-${btn.dataset.dtab}`).style.display = 'block';
+    });
+  });
+
+  dock.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
+    input.addEventListener('input', (e) => {
+      pushUndoSnapshot();
+      document.documentElement.style.setProperty(e.target.dataset.cssVar, e.target.value);
+      editorState.colors[e.target.dataset.cssVar] = e.target.value;
+      scheduleAutoSave();
+    });
+  });
+
+  dock.querySelector('#dock-upload-file').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const statusEl = dock.querySelector('#save-status-msg');
+    statusEl.textContent = 'Uploading photo...';
+
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filePath = `upload-${Date.now()}-${safeName}`;
+
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(filePath, file, { upsert: true });
+    if (error) {
+      statusEl.textContent = `Upload failed: ${error.message}`;
+      return;
+    }
+
+    const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filePath);
+    if (!pub?.publicUrl) return;
+
+    pushUndoSnapshot();
+    editorState.uploads = editorState.uploads || [];
+    editorState.uploads.unshift({ name: safeName, url: pub.publicUrl });
+    editorState.blocks.push({
+      id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      type: 'image-block',
+      src: pub.publicUrl,
+      caption: safeName
+    });
+
+    renderUploadsGallery();
+    renderDynamicBlocks(editorState.blocks, true);
+    await saveNow();
+  });
+
+  dock.querySelectorAll('[data-insert-widget]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pushUndoSnapshot();
+      editorState = captureDomState();
+      const wType = btn.dataset.insertWidget;
+      const newBlock = {
+        id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`
+      };
+
+      if (['h1', 'h2', 'h3', 'p'].includes(wType)) {
+        newBlock.type = 'text-node';
+        newBlock.tag = wType;
+        newBlock.content = wType === 'p' ? 'New paragraph text...' : `New ${wType.toUpperCase()} heading`;
+      } else if (wType === 'video') {
+        const ytUrl = prompt('Paste YouTube URL or Video ID:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || '';
+        newBlock.type = 'video';
+        newBlock.ytUrl = ytUrl;
+        newBlock.autoplay = false;
+        newBlock.title = 'Featured Video';
+      } else if (wType === 'pdf') {
+        const pdfUrl = prompt('Paste PDF URL or Google Drive link:', '') || '';
+        newBlock.type = 'pdf';
+        newBlock.pdfUrl = pdfUrl;
+        newBlock.title = 'Attached PDF';
+      } else if (wType === 'chart') {
+        const rawLabels = prompt('Chart labels (comma-separated):', 'Jan, Feb, Mar, Apr') || 'Jan, Feb, Mar';
+        const rawValues = prompt('Chart numbers (comma-separated):', '12, 24, 18, 32') || '12, 24, 18';
+        newBlock.type = 'chart';
+        newBlock.labels = rawLabels.split(',').map((s) => s.trim());
+        newBlock.values = rawValues.split(',').map((n) => Number(n.trim()) || 0);
+      } else {
+        newBlock.type = wType;
+      }
+
+      editorState.blocks.push(newBlock);
+      renderDynamicBlocks(editorState.blocks, true);
+      scheduleAutoSave();
+    });
+  });
+
+  dock.querySelector('#create-page-btn').addEventListener('click', async () => {
+    const slugInput = dock.querySelector('#new-page-slug');
+    const slug = slugInput.value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+    if (!slug) return;
+
+    const targetPageId = `page:${slug}`;
+    await supabase.from('site_content').upsert(
+      {
+        id: targetPageId,
+        content: {
+          texts: {},
+          textStyles: {},
+          colors: editorState.colors || {},
+          images: {},
+          backgrounds: {},
+          uploads: editorState.uploads || [],
+          blocks: [{ id: `blk_${Date.now()}`, type: 'text-node', tag: 'h1', content: slug.toUpperCase() }]
+        },
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    );
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', slug);
+    url.searchParams.set('edit', 'true');
+    window.location.href = url.toString();
+  });
+
+  const handleUndo = () => {
+    if (!undoStack.length) return;
+    redoStack.push(captureDomState());
+    const prev = undoStack.pop();
+    isApplyingHistory = true;
+    editorState = prev;
+    applyStateToDom(editorState, true);
+    isApplyingHistory = false;
+    scheduleAutoSave();
+  };
+
+  const handleRedo = () => {
+    if (!redoStack.length) return;
+    undoStack.push(captureDomState());
+    const next = redoStack.pop();
+    isApplyingHistory = true;
+    editorState = next;
+    applyStateToDom(editorState, true);
+    isApplyingHistory = false;
+    scheduleAutoSave();
+  };
+
+  dock.querySelector('#undo-btn').addEventListener('click', handleUndo);
+  dock.querySelector('#redo-btn').addEventListener('click', handleRedo);
+  dock.querySelector('#save-now-btn').addEventListener('click', saveNow);
+
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        handleRedo();
+      }
+    },
+    true
+  );
+}
+
+function rgbOrHexToHex(colorStr, fallback) {
+  const trimmed = (colorStr || '').trim();
+  if (/^#[0-9A-Fa-f]{6}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!match) return fallback;
+  const toHex = (n) => Number(n).toString(16).padStart(2, '0');
+  return `#${toHex(match[1])}${toHex(match[2])}${toHex(match[3])}`;
+}
