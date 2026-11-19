@@ -23,7 +23,7 @@
   <script>
     const SUPABASE_URL = 'https://uxawnkddduhhvjhrvijn.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_V8JViisHhHsXnTbx3bbtMw_nknLtOEZ';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     document.getElementById('google-login-btn').addEventListener('click', async () => {
       const { error } = await supabase.auth.signInWithOAuth({
