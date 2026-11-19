@@ -23,7 +23,7 @@
   --border-color: #343D47;
 }
 
-* {
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -418,7 +418,7 @@ body {
   color: var(--text-main);
 }
 
- subterranean-bottom, .footer-bottom {
+.footer-bottom {
   max-width: 1200px;
   margin: 0 auto;
   border-top: 1px solid var(--border-color);
