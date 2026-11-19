@@ -14,7 +14,7 @@
   <!-- Navigation Ribbon -->
   <header class="nav-ribbon">
     <div class="nav-container">
-      <a href="../index.html" class="brand-logo">MARVEL TANG</a>
+      <a href="../index.html" class="brand-logo" data-edit-text="project-brand-logo">MARVEL TANG</a>
       <nav class="nav-links">
         <a href="../index.html" class="nav-item">Home</a>
         <a href="blog.html" class="nav-item">Blog</a>
@@ -30,32 +30,34 @@
   <!-- Main Projects Content -->
   <main class="content-wrapper">
     <div class="page-header">
-      <span class="mono">SELECTED WORK</span>
-      <h1>Featured Projects & Applications</h1>
-      <p>Explorations across platforms, spatial visualization, and sustainable commerce.</p>
+      <span class="mono" data-edit-text="project-kicker">SELECTED WORK</span>
+      <h1 data-edit-text="project-title">Featured Projects & Applications</h1>
+      <p data-edit-text="project-subtitle">Explorations across platforms, spatial visualization, and sustainable commerce.</p>
     </div>
 
     <section class="section-block">
       <div class="cards-grid">
         <article class="featured-card">
           <div class="featured-meta">
-            <span class="mono">PEER-TO-PEER PLATFORM</span>
-            <span class="mono">IN DEVELOPMENT</span>
+            <span class="mono" data-edit-text="project-card1-cat">PEER-TO-PEER PLATFORM</span>
+            <span class="mono" data-edit-text="project-card1-status">IN DEVELOPMENT</span>
           </div>
-          <h3>Project Threadshare</h3>
-          <p>A peer-to-peer clothing trading platform built to encourage sustainable garment circulation and community commerce.</p>
+          <h3 data-edit-text="project-card1-title">Project Threadshare</h3>
+          <p data-edit-text="project-card1-desc">A peer-to-peer clothing trading platform built to encourage sustainable garment circulation and community commerce.</p>
         </article>
 
         <article class="featured-card">
           <div class="featured-meta">
-            <span class="mono">SPATIAL WEB APPLICATION</span>
-            <span class="mono">PROTOTYPE</span>
+            <span class="mono" data-edit-text="project-card2-cat">SPATIAL WEB APPLICATION</span>
+            <span class="mono" data-edit-text="project-card2-status">PROTOTYPE</span>
           </div>
-          <h3>MinglePort</h3>
-          <p>Mapping specialty coffee shops across Hong Kong using open spatial data integrated with community interaction prompts.</p>
+          <h3 data-edit-text="project-card2-title">MinglePort</h3>
+          <p data-edit-text="project-card2-desc">Mapping specialty coffee shops across Hong Kong using open spatial data integrated with community interaction prompts.</p>
         </article>
       </div>
     </section>
+
+    <div id="dynamic-blocks-container"></div>
   </main>
 
   <!-- Global Footer -->
@@ -63,7 +65,7 @@
     <div class="footer-container">
       <div class="footer-col">
         <span class="brand-logo">MARVEL TANG</span>
-        <p class="footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
+        <p class="footer-desc" data-edit-text="project-footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
       </div>
       <div class="footer-col">
         <span class="mono footer-title">Navigation</span>
@@ -80,10 +82,11 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <span class="mono">&copy; 2026 Marvel Tang. All rights reserved.</span>
+      <span class="mono" data-edit-text="project-footer-copy">&copy; 2026 Marvel Tang. All rights reserved.</span>
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="module" src="../main.js"></script>
 </body>
 </html>

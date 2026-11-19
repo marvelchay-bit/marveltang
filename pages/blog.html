@@ -14,7 +14,7 @@
   <!-- Navigation Ribbon -->
   <header class="nav-ribbon">
     <div class="nav-container">
-      <a href="../index.html" class="brand-logo">MARVEL TANG</a>
+      <a href="../index.html" class="brand-logo" data-edit-text="blog-brand-logo">MARVEL TANG</a>
       <nav class="nav-links">
         <a href="../index.html" class="nav-item">Home</a>
         <a href="blog.html" class="nav-item active">Blog</a>
@@ -30,34 +30,36 @@
   <!-- Main Blog Content -->
   <main class="content-wrapper">
     <div class="page-header">
-      <span class="mono">EDITORIAL PUBLICATION</span>
-      <h1>Blog & Strategic Investigations</h1>
-      <p>Original analyses, observations on consumer behavior, and marketing research.</p>
+      <span class="mono" data-edit-text="blog-kicker">EDITORIAL PUBLICATION</span>
+      <h1 data-edit-text="blog-title">Blog & Strategic Investigations</h1>
+      <p data-edit-text="blog-subtitle">Original analyses, observations on consumer behavior, and marketing research.</p>
     </div>
 
     <section class="section-block">
       <div class="cards-grid">
         <article class="featured-card">
           <div class="featured-meta">
-            <span class="mono">BRAND INVESTIGATIONS</span>
-            <span class="mono">OCTOBER 2026 — 6 MIN READ</span>
+            <span class="mono" data-edit-text="blog-post1-cat">BRAND INVESTIGATIONS</span>
+            <span class="mono" data-edit-text="blog-post1-meta">OCTOBER 2026 — 6 MIN READ</span>
           </div>
-          <h3>Does distribution prove marketing success?</h3>
-          <p>An analytical look at how physical availability often masks underlying positioning vulnerabilities in emerging retail markets.</p>
+          <h3 data-edit-text="blog-post1-title">Does distribution prove marketing success?</h3>
+          <p data-edit-text="blog-post1-excerpt">An analytical look at how physical availability often masks underlying positioning vulnerabilities in emerging retail markets.</p>
           <a href="#" class="read-link">Read article →</a>
         </article>
 
         <article class="featured-card">
           <div class="featured-meta">
-            <span class="mono">CONSUMER PSYCHOLOGY</span>
-            <span class="mono">SEPTEMBER 2026 — 4 MIN READ</span>
+            <span class="mono" data-edit-text="blog-post2-cat">CONSUMER PSYCHOLOGY</span>
+            <span class="mono" data-edit-text="blog-post2-meta">SEPTEMBER 2026 — 4 MIN READ</span>
           </div>
-          <h3>Why consumers say one thing and buy another</h3>
-          <p>Exploring the gap between stated preference and revealed purchasing behavior in market research.</p>
+          <h3 data-edit-text="blog-post2-title">Why consumers say one thing and buy another</h3>
+          <p data-edit-text="blog-post2-excerpt">Exploring the gap between stated preference and revealed purchasing behavior in market research.</p>
           <a href="#" class="read-link">Read article →</a>
         </article>
       </div>
     </section>
+
+    <div id="dynamic-blocks-container"></div>
   </main>
 
   <!-- Global Footer -->
@@ -65,7 +67,7 @@
     <div class="footer-container">
       <div class="footer-col">
         <span class="brand-logo">MARVEL TANG</span>
-        <p class="footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
+        <p class="footer-desc" data-edit-text="blog-footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
       </div>
       <div class="footer-col">
         <span class="mono footer-title">Navigation</span>
@@ -82,10 +84,11 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <span class="mono">&copy; 2026 Marvel Tang. All rights reserved.</span>
+      <span class="mono" data-edit-text="blog-footer-copy">&copy; 2026 Marvel Tang. All rights reserved.</span>
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="module" src="../main.js"></script>
 </body>
 </html>

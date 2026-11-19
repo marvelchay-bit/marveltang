@@ -14,7 +14,7 @@
   <!-- Navigation Ribbon -->
   <header class="nav-ribbon">
     <div class="nav-container">
-      <a href="../index.html" class="brand-logo">MARVEL TANG</a>
+      <a href="../index.html" class="brand-logo" data-edit-text="about-brand-logo">MARVEL TANG</a>
       <nav class="nav-links">
         <a href="../index.html" class="nav-item">Home</a>
         <a href="blog.html" class="nav-item">Blog</a>
@@ -30,25 +30,27 @@
   <!-- Main About Content -->
   <main class="content-wrapper">
     <div class="page-header">
-      <span class="mono">BACKGROUND & PERSPECTIVE</span>
-      <h1>Still learning. Always investigating.</h1>
-      <p>Marketing and Management student at HKUST. Interested in the decisions that shape businesses and the behavior that shapes markets.</p>
+      <span class="mono" data-edit-text="about-kicker">BACKGROUND & PERSPECTIVE</span>
+      <h1 data-edit-text="about-title">Still learning. Always investigating.</h1>
+      <p data-edit-text="about-subtitle">Marketing and Management student at HKUST. Interested in the decisions that shape businesses and the behavior that shapes markets.</p>
     </div>
 
     <section class="section-block">
       <div class="cards-grid">
         <article class="featured-card">
-          <span class="mono">ACADEMIC & STRATEGY</span>
-          <h3 style="margin-top: 10px;">Core Focus</h3>
-          <p>My work spans marketing strategy, brand positioning, consumer behavior, and business automation toolchains. This digital space serves as a permanent home for research, field logs, and strategic experiments.</p>
+          <span class="mono" data-edit-text="about-card1-kicker">ACADEMIC & STRATEGY</span>
+          <h3 style="margin-top: 10px;" data-edit-text="about-card1-title">Core Focus</h3>
+          <p data-edit-text="about-card1-body">My work spans marketing strategy, brand positioning, consumer behavior, and business automation toolchains. This digital space serves as a permanent home for research, field logs, and strategic experiments.</p>
         </article>
         <article class="featured-card">
-          <span class="mono">MEDIA PRODUCTION</span>
-          <h3 style="margin-top: 10px;">Visual & Spatial Work</h3>
-          <p>Passionate about camera operation, color grading, travel log production, and spatial UI applications that bridge digital experiences with real-world context.</p>
+          <span class="mono" data-edit-text="about-card2-kicker">MEDIA PRODUCTION</span>
+          <h3 style="margin-top: 10px;" data-edit-text="about-card2-title">Visual & Spatial Work</h3>
+          <p data-edit-text="about-card2-body">Passionate about camera operation, color grading, travel log production, and spatial UI applications that bridge digital experiences with real-world context.</p>
         </article>
       </div>
     </section>
+
+    <div id="dynamic-blocks-container"></div>
   </main>
 
   <!-- Global Footer -->
@@ -56,7 +58,7 @@
     <div class="footer-container">
       <div class="footer-col">
         <span class="brand-logo">MARVEL TANG</span>
-        <p class="footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
+        <p class="footer-desc" data-edit-text="about-footer-desc">Marketing and Management student at HKUST. Building a permanent digital home for business research and strategy.</p>
       </div>
       <div class="footer-col">
         <span class="mono footer-title">Navigation</span>
@@ -73,10 +75,11 @@
       </div>
     </div>
     <div class="footer-bottom">
-      <span class="mono">&copy; 2026 Marvel Tang. All rights reserved.</span>
+      <span class="mono" data-edit-text="about-footer-copy">&copy; 2026 Marvel Tang. All rights reserved.</span>
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="module" src="../main.js"></script>
 </body>
 </html>

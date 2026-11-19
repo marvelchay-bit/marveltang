@@ -424,3 +424,90 @@ body {
   border-top: 1px solid var(--border-color);
   padding-top: 30px;
 }
+
+/* Visual Text Effects */
+.fx-shadow {
+  text-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+.fx-neon {
+  text-shadow: 0 0 8px rgba(147, 175, 199, 0.9), 0 0 22px rgba(113, 134, 154, 0.75);
+}
+
+.fx-outline {
+  -webkit-text-stroke: 1px var(--text-main);
+  color: transparent;
+}
+
+/* Entrance Animations */
+@keyframes blockFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.anim-fade-in {
+  animation: blockFadeIn 0.65s ease forwards;
+}
+
+.anim-type {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid var(--text-main);
+  animation: typingEffect 2.2s steps(36, end) forwards, caretBlink 0.75s step-end infinite;
+}
+
+@keyframes typingEffect {
+  from { max-width: 0; }
+  to { max-width: 100%; }
+}
+
+@keyframes caretBlink {
+  50% { border-color: transparent; }
+}
+
+/* Floating Formatting Ribbon */
+#floating-format-ribbon {
+  position: fixed;
+  top: 82px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100000;
+  background: #202124;
+  color: #F5F5F2;
+  border: 1px solid #343D47;
+  border-radius: 12px;
+  padding: 8px 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-primary);
+  font-size: 0.78rem;
+  max-width: 94vw;
+}
+
+#floating-format-ribbon select,
+#floating-format-ribbon input[type="number"],
+#floating-format-ribbon button {
+  background: #15191F;
+  color: #F5F5F2;
+  border: 1px solid #343D47;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+#floating-format-ribbon button.active-fmt {
+  background: #C9D8E5;
+  color: #202124;
+  font-weight: 700;
+}
