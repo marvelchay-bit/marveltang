@@ -696,3 +696,207 @@ body.studio-panel-open #canva-side-panel {
 @keyframes caretBlink {
   50% { border-color: transparent; }
 }
+
+/* Full-Height Flush-Left White Canva Studio */
+body.studio-mode {
+  padding-top: 94px !important;
+  padding-left: 72px !important;
+  transition: padding-left 0.2s ease;
+}
+
+body.studio-mode.studio-drawer-open {
+  padding-left: 360px !important;
+}
+
+#studio-top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: #FFFFFF;
+  color: #0F172A;
+  border-bottom: 1.5px solid #CBD5E1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  z-index: 100003;
+  font-family: 'Poppins', 'Plus Jakarta Sans', Helvetica, sans-serif;
+}
+
+#studio-format-bar {
+  position: fixed;
+  top: 48px;
+  left: 72px;
+  right: 0;
+  min-height: 46px;
+  background: #FFFFFF;
+  color: #0F172A;
+  border-bottom: 1.5px solid #CBD5E1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 14px;
+  z-index: 100002;
+  font-family: 'Poppins', 'Plus Jakarta Sans', Helvetica, sans-serif;
+  transition: left 0.2s ease;
+}
+
+body.studio-mode.studio-drawer-open #studio-format-bar {
+  left: 360px;
+}
+
+#studio-format-bar select,
+#studio-format-bar input[type="number"],
+#studio-format-bar input[type="range"],
+#studio-format-bar button {
+  background: #FFFFFF;
+  color: #0F172A;
+  border: 1px solid #94A3B8;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+#studio-format-bar button:hover,
+#studio-format-bar button.is-active {
+  background: #EEF2FF;
+  border-color: #4F46E5;
+  color: #3730A3;
+}
+
+/* Flush Left Edge: Top to Bottom with Zero Outer Padding */
+#studio-left-rail {
+  position: fixed;
+  top: 48px;
+  left: 0;
+  bottom: 0;
+  width: 72px;
+  background: #FFFFFF;
+  color: #0F172A;
+  border-right: 1.5px solid #CBD5E1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  margin: 0;
+  gap: 6px;
+  z-index: 100003;
+  font-family: 'Poppins', 'Plus Jakarta Sans', Helvetica, sans-serif;
+}
+
+.studio-rail-btn {
+  width: 58px;
+  padding: 8px 4px;
+  background: #FFFFFF;
+  color: #1E293B;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.studio-rail-btn:hover,
+.studio-rail-btn.active {
+  background: #F1F5F9;
+  border-color: #94A3B8;
+  color: #0F172A;
+  font-weight: 600;
+}
+
+#studio-side-drawer {
+  position: fixed;
+  top: 48px;
+  left: 72px;
+  bottom: 0;
+  width: 288px;
+  background: #FFFFFF;
+  color: #0F172A;
+  border-right: 1.5px solid #CBD5E1;
+  padding: 14px;
+  margin: 0;
+  overflow-y: auto;
+  display: none;
+  z-index: 100002;
+  font-family: 'Poppins', 'Plus Jakarta Sans', Helvetica, sans-serif;
+}
+
+body.studio-mode.studio-drawer-open #studio-side-drawer {
+  display: block;
+}
+
+.studio-card-btn {
+  background: #FFFFFF;
+  color: #0F172A;
+  border: 1px solid #94A3B8;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.studio-card-btn:hover {
+  background: #F8FAFC;
+  border-color: #0F172A;
+}
+
+.studio-selected-outline {
+  outline: 2px solid #2563EB !important;
+  outline-offset: 4px;
+}
+
+/* Text Effects */
+.fx-shadow {
+  text-shadow: 0 4px 14px rgba(15, 23, 42, 0.28);
+}
+
+.fx-neon {
+  text-shadow: 0 0 8px rgba(37, 99, 235, 0.75), 0 0 20px rgba(14, 165, 233, 0.65);
+}
+
+.fx-outline {
+  -webkit-text-stroke: 1px var(--text-main);
+  color: transparent;
+}
+
+/* Entrance Animations */
+@keyframes studioFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.anim-fade-in {
+  animation: studioFadeIn 0.65s ease forwards;
+}
+
+.anim-type {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid var(--text-main);
+  animation: studioTyping 2.2s steps(36, end) forwards, studioCaret 0.75s step-end infinite;
+}
+
+@keyframes studioTyping {
+  from { max-width: 0; }
+  to { max-width: 100%; }
+}
+
+@keyframes studioCaret {
+  50% { border-color: transparent; }
+}

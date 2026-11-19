@@ -10,7 +10,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 function getCurrentPageKey() {
   const params = new URLSearchParams(window.location.search);
   const customPage = params.get('page');
-  if (customPage) return `page:${customPage.toLowerCase().replace(/[^a-z0-9-_]/g, '')}`;
+  if (customPage) {
+    return `page:${customPage.toLowerCase().replace(/[^a-z0-9-_]/g, '')}`;
+  }
 
   const cleanPath = window.location.pathname.replace(/^\/+|\/+$/g, '') || 'index.html';
   const baseName = cleanPath.split('/').pop().replace(/\.html$/i, '') || 'index';
@@ -23,6 +25,12 @@ let editorState = {
   texts: {},
   textStyles: {},
   colors: {},
+  brand: {
+    logoText: 'MARVEL TANG',
+    logoUrl: '',
+    primaryColor: '#0F172A',
+    accentColor: '#71869A'
+  },
   images: {},
   backgrounds: {},
   uploads: [],
@@ -35,6 +43,7 @@ let autoSaveTimer = null;
 let isApplyingHistory = false;
 let activeEditableEl = null;
 let activeStyleKey = null;
+let studioInitialized = false;
 const chartInstances = new Map();
 
 function cloneState(obj) {
@@ -44,10 +53,10 @@ function cloneState(obj) {
 function isStudioUiNode(el) {
   if (!el || !(el instanceof Element)) return false;
   return Boolean(
-    el.closest('#canva-top-bar') ||
-      el.closest('#canva-format-bar') ||
-      el.closest('#canva-left-rail') ||
-      el.closest('#canva-side-panel')
+    el.closest('#studio-top-bar') ||
+      el.closest('#studio-format-bar') ||
+      el.closest('#studio-left-rail') ||
+      el.closest('#studio-side-drawer')
   );
 }
 
@@ -78,6 +87,9 @@ function applyElementStyle(el, styleObj = {}) {
   }
   if (styleObj.fontFamily) el.style.fontFamily = styleObj.fontFamily;
   if (styleObj.fontSize) el.style.fontSize = `${styleObj.fontSize}px`;
+  if (styleObj.opacity !== undefined && styleObj.opacity !== '') {
+    el.style.opacity = String(styleObj.opacity);
+  }
 
   el.classList.remove('fx-shadow', 'fx-neon', 'fx-outline');
   if (styleObj.effect && styleObj.effect !== 'none') {
@@ -87,6 +99,30 @@ function applyElementStyle(el, styleObj = {}) {
   el.classList.remove('anim-fade-in', 'anim-type');
   if (styleObj.animation && styleObj.animation !== 'none') {
     el.classList.add(`anim-${styleObj.animation}`);
+  }
+}
+
+function applyBrandToPage(brand = {}) {
+  if (!brand) return;
+  if (brand.primaryColor) {
+    document.documentElement.style.setProperty('--text-main', brand.primaryColor);
+  }
+  if (brand.accentColor) {
+    document.documentElement.style.setProperty('--slate-blue', brand.accentColor);
+  }
+  if (brand.logoText) {
+    document.querySelectorAll('.brand-logo').forEach((logoEl) => {
+      if (!isStudioUiNode(logoEl) && !logoEl.querySelector('img')) {
+        logoEl.textContent = brand.logoText;
+      }
+    });
+  }
+  if (brand.logoUrl) {
+    document.querySelectorAll('.brand-logo').forEach((logoEl) => {
+      if (!isStudioUiNode(logoEl)) {
+        logoEl.innerHTML = `<img src="${brand.logoUrl}" alt="${brand.logoText || 'Logo'}" style="height:28px;width:auto;object-fit:contain;vertical-align:middle;">`;
+      }
+    });
   }
 }
 
@@ -123,7 +159,7 @@ function captureDomState() {
   });
 
   const colors = { ...(editorState.colors || {}) };
-  document.querySelectorAll('#canva-side-panel input[type="color"][data-css-var]').forEach((input) => {
+  document.querySelectorAll('#studio-side-drawer input[type="color"][data-css-var]').forEach((input) => {
     colors[input.dataset.cssVar] = input.value;
   });
 
@@ -138,6 +174,7 @@ function captureDomState() {
     texts,
     textStyles: cloneState(editorState.textStyles || {}),
     colors,
+    brand: cloneState(editorState.brand || {}),
     images,
     backgrounds: { ...(editorState.backgrounds || {}) },
     uploads: cloneState(editorState.uploads || []),
@@ -158,26 +195,29 @@ function pushUndoSnapshot() {
 
 function selectEditableElement(el, styleKey) {
   if (activeEditableEl && activeEditableEl !== el) {
-    activeEditableEl.classList.remove('studio-selected-box');
+    activeEditableEl.classList.remove('studio-selected-outline');
   }
   activeEditableEl = el;
   activeStyleKey = styleKey;
   if (el) {
-    el.classList.add('studio-selected-box');
+    el.classList.add('studio-selected-outline');
     syncFormatBarToElement(el, styleKey);
   }
 }
 
 function syncFormatBarToElement(el, styleKey) {
-  const bar = document.getElementById('canva-format-bar');
+  const bar = document.getElementById('studio-format-bar');
   if (!bar || !el) return;
   const st = editorState.textStyles?.[styleKey] || {};
   const computedPx = parseInt(getComputedStyle(el).fontSize, 10) || 18;
+  const currentOpacity = st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(getComputedStyle(el).opacity || 1);
 
-  bar.querySelector('#fmt-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#1e2229');
-  bar.querySelector('#fmt-drop-color').value = rgbOrHexToHex(st.dropColor || '', '#f5f3ff');
+  bar.querySelector('#fmt-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#0F172A');
+  bar.querySelector('#fmt-drop-color').value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
   bar.querySelector('#fmt-font-family').value = st.fontFamily || '';
   bar.querySelector('#fmt-font-size').value = st.fontSize || computedPx;
+  bar.querySelector('#fmt-opacity').value = Math.round(currentOpacity * 100);
+  bar.querySelector('#fmt-opacity-val').textContent = `${Math.round(currentOpacity * 100)}%`;
   bar.querySelector('#fmt-effect').value = st.effect || 'none';
   bar.querySelector('#fmt-animation').value = st.animation || 'none';
 }
@@ -196,7 +236,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
     wrapper.dataset.blockId = block.id;
 
     const removeBtnHtml = isEditMode
-      ? `<button type="button" data-remove-block="${block.id}" style="float:right;font-size:0.74rem;padding:4px 8px;cursor:pointer;border-radius:6px;border:1px solid #d5dae2;background:#fff;color:#1e2229;">Remove</button>`
+      ? `<button type="button" data-remove-block="${block.id}" class="studio-card-btn" style="float:right;">Remove</button>`
       : '';
 
     const styleKeyPrefix = `block:${block.id}`;
@@ -213,7 +253,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
     } else if (block.type === 'divider') {
       wrapper.innerHTML = `
         ${removeBtnHtml}
-        <hr style="border:none;border-top:1px solid var(--border-color);margin:16px 0;">
+        <hr style="border:none;border-top:1.5px solid var(--border-color);margin:16px 0;">
       `;
     } else if (block.type === 'pdf') {
       const pdfUrl = toEmbedPdfUrl(block.pdfUrl || '');
@@ -354,7 +394,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
         <div class="featured-card" style="overflow-x:auto;">
           <span class="mono">DATA TABLE</span>
           <table style="width:100%;border-collapse:collapse;margin-top:12px;">${trHtml}</table>
-          ${isEditMode ? `<button type="button" data-add-row="${block.id}" style="margin-top:10px;padding:6px 10px;cursor:pointer;">+ Add Row</button>` : ''}
+          ${isEditMode ? `<button type="button" data-add-row="${block.id}" class="studio-card-btn" style="margin-top:10px;">+ Add Row</button>` : ''}
         </div>
       `;
     } else if (block.type === 'chart') {
@@ -381,7 +421,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
               {
                 label: block.chartTitle || 'Series',
                 data: values,
-                backgroundColor: '#71869A'
+                backgroundColor: editorState.brand?.accentColor || '#71869A'
               }
             ]
           },
@@ -410,7 +450,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
             isEditMode
               ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
                   <input type="text" id="new-ref-input-${block.id}" placeholder="Add citation text..." style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);">
-                  <button type="button" data-add-ref="${block.id}" style="padding:6px 12px;cursor:pointer;">+ Add Reference</button>
+                  <button type="button" data-add-ref="${block.id}" class="studio-card-btn">+ Add Reference</button>
                 </div>`
               : ''
           }
@@ -533,6 +573,8 @@ function renderDynamicBlocks(blocks, isEditMode) {
 }
 
 function applyStateToDom(state, isEditMode) {
+  applyBrandToPage(state.brand || {});
+
   Object.entries(state.texts || {}).forEach(([key, html]) => {
     const el = document.querySelector(`[data-edit-text="${key}"]`);
     if (el && el.innerHTML !== html) el.innerHTML = html;
@@ -545,7 +587,7 @@ function applyStateToDom(state, isEditMode) {
 
   Object.entries(state.colors || {}).forEach(([cssVar, value]) => {
     document.documentElement.style.setProperty(cssVar, value);
-    const picker = document.querySelector(`#canva-side-panel input[data-css-var="${cssVar}"]`);
+    const picker = document.querySelector(`#studio-side-drawer input[data-css-var="${cssVar}"]`);
     if (picker) picker.value = value;
   });
 
@@ -584,6 +626,12 @@ async function loadSavedSiteContent(isEditMode = false) {
           texts: record.content.texts || {},
           textStyles: record.content.textStyles || {},
           colors: record.content.colors || {},
+          brand: {
+            logoText: record.content.brand?.logoText || 'MARVEL TANG',
+            logoUrl: record.content.brand?.logoUrl || '',
+            primaryColor: record.content.brand?.primaryColor || '#0F172A',
+            accentColor: record.content.brand?.accentColor || '#71869A'
+          },
           images: record.content.images || {},
           backgrounds: record.content.backgrounds || {},
           uploads: record.content.uploads || [],
@@ -616,7 +664,7 @@ async function loadSavedSiteContent(isEditMode = false) {
 }
 
 async function saveNow() {
-  const statusEl = document.getElementById('canva-save-status');
+  const statusEl = document.getElementById('studio-save-status');
   editorState = captureDomState();
   const payloadContent = cloneState(editorState);
 
@@ -642,8 +690,8 @@ async function saveNow() {
 }
 
 function scheduleAutoSave() {
-  const statusEl = document.getElementById('canva-save-status');
-  if (statusEl) statusEl.textContent = 'Unsaved changes...';
+  const statusEl = document.getElementById('studio-save-status');
+  if (statusEl) statusEl.textContent = 'Unsaved...';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
     saveNow();
@@ -674,14 +722,18 @@ async function getAuthenticatedSession() {
   return null;
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function runPageApp() {
+  if (studioInitialized) return;
+  studioInitialized = true;
+
   const urlParams = new URLSearchParams(window.location.search);
   const isEditMode = urlParams.get('edit') === 'true';
 
   await loadSavedSiteContent(isEditMode);
 
   const themeToggle = document.getElementById('theme-toggle');
-  if (themeToggle) {
+  if (themeToggle && !themeToggle.dataset.bound) {
+    themeToggle.dataset.bound = 'true';
     themeToggle.addEventListener('click', () => {
       const html = document.documentElement;
       const nextTheme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
@@ -703,41 +755,49 @@ document.addEventListener('DOMContentLoaded', async () => {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
 
-    enableCanvaStudio();
+    enableWhiteCanvaStudio();
   }
-});
+}
 
-function enableCanvaStudio() {
-  document.body.classList.add('studio-active', 'studio-panel-open');
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', runPageApp);
+} else {
+  runPageApp();
+}
+
+function enableWhiteCanvaStudio() {
+  document.body.classList.add('studio-mode', 'studio-drawer-open');
   editorState = captureDomState();
   undoStack = [cloneState(editorState)];
 
   const computedStyles = getComputedStyle(document.documentElement);
 
-  // 1. Top Bar
+  // Top Bar (White with contrasting border)
   const topBar = document.createElement('header');
-  topBar.id = 'canva-top-bar';
+  topBar.id = 'studio-top-bar';
   topBar.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
-      <span style="font-weight:700;font-size:0.88rem;color:#6d28d9;">Studio</span>
-      <span class="mono" style="font-size:0.74rem;color:#6b7280;">${PAGE_ID}</span>
-      <button type="button" id="canva-undo-btn" title="Undo (Cmd+Z)">↶</button>
-      <button type="button" id="canva-redo-btn" title="Redo (Cmd+Y)">↷</button>
-      <span id="canva-save-status" class="mono" style="font-size:0.72rem;color:#6b7280;">Ready</span>
+      <strong style="font-size:0.88rem;color:#0F172A;">Studio</strong>
+      <span class="mono" style="font-size:0.74rem;color:#475569;border:1px solid #CBD5E1;padding:2px 6px;border-radius:5px;background:#F8FAFC;">${PAGE_ID}</span>
+      <button type="button" id="studio-undo-btn" title="Undo (Cmd+Z)" class="studio-card-btn" style="padding:4px 8px;">↶</button>
+      <button type="button" id="studio-redo-btn" title="Redo (Cmd+Y)" class="studio-card-btn" style="padding:4px 8px;">↷</button>
+      <span id="studio-save-status" class="mono" style="font-size:0.72rem;color:#334155;">Auto-save ready</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-      <button type="button" id="canva-save-btn" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.78rem;cursor:pointer;">Save</button>
-      <a href="${window.location.pathname}" style="text-decoration:none;font-size:0.78rem;color:#374151;padding:6px 10px;border:1px solid #d5dae2;border-radius:6px;">View Site</a>
+      <button type="button" id="studio-save-btn" style="background:#0F172A;color:#FFFFFF;border:1px solid #0F172A;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.76rem;cursor:pointer;">Save</button>
+      <a href="${window.location.pathname}" class="studio-card-btn" style="text-decoration:none;">View Live</a>
     </div>
   `;
   document.body.appendChild(topBar);
 
-  // 2. Top Contextual Format Bar
+  // Format Bar (White with contrasting border, fonts, size, colors, transparency, effects, animation)
   const formatBar = document.createElement('div');
-  formatBar.id = 'canva-format-bar';
+  formatBar.id = 'studio-format-bar';
   formatBar.innerHTML = `
-    <select id="fmt-font-family" title="Font">
+    <select id="fmt-font-family" title="Font Family">
       <option value="">Font</option>
+      <option value="'Poppins', sans-serif">Poppins</option>
+      <option value="Helvetica, Arial, sans-serif">Helvetica</option>
       <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
       <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
       <option value="Georgia, serif">Georgia</option>
@@ -745,19 +805,24 @@ function enableCanvaStudio() {
     <button type="button" id="fmt-size-dec" title="Decrease Size">−</button>
     <input type="number" id="fmt-font-size" min="10" max="120" value="18" style="width:52px;text-align:center;" title="Font Size (px)">
     <button type="button" id="fmt-size-inc" title="Increase Size">+</button>
-    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;">A <input type="color" id="fmt-text-color" value="#1e2229"></label>
-    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;">Drop <input type="color" id="fmt-drop-color" value="#f5f3ff"></label>
-    <button type="button" data-fmt-cmd="bold" title="Bold (Cmd+B)"><b>B</b></button>
-    <button type="button" data-fmt-cmd="italic" title="Italic (Cmd+I)"><i>I</i></button>
-    <button type="button" data-fmt-cmd="underline" title="Underline (Cmd+U)"><u>U</u></button>
+    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">A <input type="color" id="fmt-text-color" value="#0F172A"></label>
+    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">Drop <input type="color" id="fmt-drop-color" value="#EEF2FF"></label>
+    <label title="Transparency" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">
+      Opacity
+      <input type="range" id="fmt-opacity" min="5" max="100" value="100" style="width:68px;">
+      <span id="fmt-opacity-val" class="mono" style="font-size:0.7rem;">100%</span>
+    </label>
+    <button type="button" data-fmt-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" data-fmt-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" data-fmt-cmd="underline" title="Underline"><u>U</u></button>
     <button type="button" data-fmt-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
-    <select id="fmt-effect" title="Effects">
+    <select id="fmt-effect" title="Visual Effect">
       <option value="none">Effects</option>
       <option value="shadow">Shadow</option>
       <option value="neon">Neon</option>
       <option value="outline">Outline</option>
     </select>
-    <select id="fmt-animation" title="Animate">
+    <select id="fmt-animation" title="Animation">
       <option value="none">Animate</option>
       <option value="fade-in">Fade In</option>
       <option value="type">Type</option>
@@ -766,71 +831,94 @@ function enableCanvaStudio() {
   `;
   document.body.appendChild(formatBar);
 
-  // 3. Left Icon Rail
+  // Full-height Left Icon Rail (flush left edge, top to bottom)
   const leftRail = document.createElement('nav');
-  leftRail.id = 'canva-left-rail';
+  leftRail.id = 'studio-left-rail';
   leftRail.innerHTML = `
-    <button type="button" class="canva-rail-btn active" data-panel="widgets"><span>❖</span><span>Widgets</span></button>
-    <button type="button" class="canva-rail-btn" data-panel="text"><span>T</span><span>Text</span></button>
-    <button type="button" class="canva-rail-btn" data-panel="uploads"><span>☁</span><span>Uploads</span></button>
-    <button type="button" class="canva-rail-btn" data-panel="theme"><span>◐</span><span>Theme</span></button>
-    <button type="button" class="canva-rail-btn" id="canva-collapse-btn" title="Collapse / Expand Panel" style="margin-top:auto;margin-bottom:10px;"><span>⟨</span><span>Hide</span></button>
+    <button type="button" class="studio-rail-btn active" data-panel="widgets"><span>❖</span><span>Widgets</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="text"><span>T</span><span>Text</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="uploads"><span>☁</span><span>Uploads</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="brand"><span>★</span><span>Brand</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="theme"><span>◐</span><span>Theme/Pg</span></button>
+    <button type="button" class="studio-rail-btn" id="studio-drawer-toggle" title="Toggle Drawer" style="margin-top:auto;"><span>⟨</span><span>Drawer</span></button>
   `;
   document.body.appendChild(leftRail);
 
-  // 4. Collapsible Left Side Panel
-  const sidePanel = document.createElement('aside');
-  sidePanel.id = 'canva-side-panel';
-  sidePanel.innerHTML = `
-    <div id="cpanel-widgets" class="cpanel-view">
-      <div style="font-weight:700;margin-bottom:10px;">Widgets</div>
+  // Full-height Left Side Drawer (flush against left rail, top to bottom)
+  const sideDrawer = document.createElement('aside');
+  sideDrawer.id = 'studio-side-drawer';
+  sideDrawer.innerHTML = `
+    <div id="spanel-widgets" class="spanel-view">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Widgets</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <button type="button" data-add-block="divider" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Horizontal Line</button>
-        <button type="button" data-add-block="pdf" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">PDF Embed</button>
-        <button type="button" data-add-block="author" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Author Card</button>
-        <button type="button" data-add-block="video" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">YouTube Video</button>
-        <button type="button" data-add-block="quiz" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Quiz</button>
-        <button type="button" data-add-block="survey" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Poll</button>
-        <button type="button" data-add-block="table" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Table</button>
-        <button type="button" data-add-block="chart" style="padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#fff;cursor:pointer;">Chart</button>
-        <button type="button" data-add-block="references" style="grid-column:span 2;padding:8px;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;cursor:pointer;">References Section</button>
+        <button type="button" data-add-block="divider" class="studio-card-btn">Horizontal Line</button>
+        <button type="button" data-add-block="pdf" class="studio-card-btn">PDF Embed</button>
+        <button type="button" data-add-block="author" class="studio-card-btn">Author Card</button>
+        <button type="button" data-add-block="video" class="studio-card-btn">YouTube Video</button>
+        <button type="button" data-add-block="quiz" class="studio-card-btn">Quiz</button>
+        <button type="button" data-add-block="survey" class="studio-card-btn">Poll</button>
+        <button type="button" data-add-block="table" class="studio-card-btn">Table</button>
+        <button type="button" data-add-block="chart" class="studio-card-btn">Chart</button>
+        <button type="button" data-add-block="references" class="studio-card-btn" style="grid-column:span 2;">References Section</button>
       </div>
     </div>
 
-    <div id="cpanel-text" class="cpanel-view" style="display:none;">
-      <div style="font-weight:700;margin-bottom:10px;">Add Text</div>
+    <div id="spanel-text" class="spanel-view" style="display:none;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Text Elements</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" data-add-text="h1" style="padding:12px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:1.25rem;font-weight:700;cursor:pointer;">Add Heading (H1)</button>
-        <button type="button" data-add-text="h2" style="padding:10px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:1.05rem;font-weight:600;cursor:pointer;">Add Subheading (H2)</button>
-        <button type="button" data-add-text="h3" style="padding:9px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#f9fafb;font-size:0.92rem;font-weight:600;cursor:pointer;">Add Title (H3)</button>
-        <button type="button" data-add-text="p" style="padding:8px;text-align:left;border:1px solid #d5dae2;border-radius:8px;background:#fff;font-size:0.84rem;cursor:pointer;">Add normal text</button>
+        <button type="button" data-add-text="h1" class="studio-card-btn" style="text-align:left;font-size:1.15rem;font-weight:700;">Add Heading (H1)</button>
+        <button type="button" data-add-text="h2" class="studio-card-btn" style="text-align:left;font-size:1rem;font-weight:600;">Add Subheading (H2)</button>
+        <button type="button" data-add-text="h3" class="studio-card-btn" style="text-align:left;font-size:0.9rem;font-weight:600;">Add Title (H3)</button>
+        <button type="button" data-add-text="p" class="studio-card-btn" style="text-align:left;">Add normal text</button>
       </div>
     </div>
 
-    <div id="cpanel-uploads" class="cpanel-view" style="display:none;">
-      <div style="font-weight:700;margin-bottom:8px;">Uploads</div>
-      <input type="file" id="canva-upload-input" accept="image/*" style="width:100%;font-size:0.75rem;margin-bottom:12px;">
-      <div id="canva-uploads-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
+    <div id="spanel-uploads" class="spanel-view" style="display:none;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Uploads Library</div>
+      <input type="file" id="studio-upload-input" accept="image/*" style="width:100%;font-size:0.74rem;margin-bottom:12px;border:1px solid #94A3B8;padding:6px;border-radius:6px;background:#fff;">
+      <div id="studio-uploads-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
     </div>
 
-    <div id="cpanel-theme" class="cpanel-view" style="display:none;">
-      <div style="font-weight:700;margin-bottom:10px;">Theme & Pages</div>
+    <div id="spanel-brand" class="spanel-view" style="display:none;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Brand Kit</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <label style="font-size:0.76rem;font-weight:600;">
+          Brand Logo Text
+          <input type="text" id="brand-logo-text-input" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+        </label>
+        <label style="font-size:0.76rem;font-weight:600;">
+          Brand Logo Image URL (optional)
+          <input type="text" id="brand-logo-url-input" value="${editorState.brand?.logoUrl || ''}" placeholder="https://..." style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.76rem;font-weight:600;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;">
+          <span>Primary Brand Color</span>
+          <input type="color" id="brand-primary-color" value="${rgbOrHexToHex(editorState.brand?.primaryColor, '#0F172A')}">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.76rem;font-weight:600;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;">
+          <span>Accent Brand Color</span>
+          <input type="color" id="brand-accent-color" value="${rgbOrHexToHex(editorState.brand?.accentColor, '#71869A')}">
+        </label>
+      </div>
+    </div>
+
+    <div id="spanel-theme" class="spanel-view" style="display:none;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Theme & Pages</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.8rem;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
       </div>
-      <div style="border-top:1px solid #e2e5ea;padding-top:12px;">
+      <div style="border-top:1.5px solid #CBD5E1;padding-top:12px;">
         <div style="font-weight:600;font-size:0.78rem;margin-bottom:6px;">Create New Page</div>
         <div style="display:flex;gap:6px;">
-          <input type="text" id="canva-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #d5dae2;border-radius:6px;">
-          <button type="button" id="canva-create-page" style="padding:6px 10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
+          <input type="text" id="studio-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+          <button type="button" id="studio-create-page" style="padding:6px 10px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
         </div>
       </div>
     </div>
   `;
-  document.body.appendChild(sidePanel);
+  document.body.appendChild(sideDrawer);
 
   // Make static [data-edit-text] elements editable and selectable
   document.querySelectorAll('[data-edit-text]').forEach((el) => {
@@ -838,7 +926,7 @@ function enableCanvaStudio() {
     const sKey = el.dataset.editText;
     el.dataset.styleKey = sKey;
     el.contentEditable = 'true';
-    el.style.outline = '1px dashed rgba(124, 58, 237, 0.45)';
+    el.style.outline = '1px dashed #64748B';
     el.style.outlineOffset = '4px';
 
     el.addEventListener('focus', () => {
@@ -852,7 +940,7 @@ function enableCanvaStudio() {
     });
   });
 
-  // Format bar actions
+  // Format bar actions including Transparency (opacity)
   const patchActiveStyle = (patch) => {
     if (!activeEditableEl || !activeStyleKey) return;
     pushUndoSnapshot();
@@ -879,6 +967,11 @@ function enableCanvaStudio() {
   });
   formatBar.querySelector('#fmt-text-color').addEventListener('input', (e) => patchActiveStyle({ color: e.target.value }));
   formatBar.querySelector('#fmt-drop-color').addEventListener('input', (e) => patchActiveStyle({ dropColor: e.target.value }));
+  formatBar.querySelector('#fmt-opacity').addEventListener('input', (e) => {
+    const pct = Number(e.target.value);
+    formatBar.querySelector('#fmt-opacity-val').textContent = `${pct}%`;
+    patchActiveStyle({ opacity: pct / 100 });
+  });
   formatBar.querySelector('#fmt-effect').addEventListener('change', (e) => patchActiveStyle({ effect: e.target.value }));
   formatBar.querySelector('#fmt-animation').addEventListener('change', (e) => patchActiveStyle({ animation: e.target.value }));
 
@@ -896,30 +989,43 @@ function enableCanvaStudio() {
     const refNum = prompt('Reference number to embed (e.g. 1):', '1');
     if (!refNum) return;
     pushUndoSnapshot();
-    document.execCommand('insertHTML', false, `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#6d28d9;font-weight:700;">[${refNum}]</sup>&nbsp;`);
+    document.execCommand('insertHTML', false, `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#2563EB;font-weight:700;">[${refNum}]</sup>&nbsp;`);
     editorState = captureDomState();
     scheduleAutoSave();
   });
 
-  // Rail switching & collapse
-  const railBtns = leftRail.querySelectorAll('.canva-rail-btn[data-panel]');
-  const panelViews = sidePanel.querySelectorAll('.cpanel-view');
+  // Left rail switching & drawer toggle
+  const railBtns = leftRail.querySelectorAll('.studio-rail-btn[data-panel]');
+  const panelViews = sideDrawer.querySelectorAll('.spanel-view');
   railBtns.forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.body.classList.add('studio-panel-open');
+      document.body.classList.add('studio-drawer-open');
       railBtns.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       panelViews.forEach((v) => (v.style.display = 'none'));
-      sidePanel.querySelector(`#cpanel-${btn.dataset.panel}`).style.display = 'block';
+      sideDrawer.querySelector(`#spanel-${btn.dataset.panel}`).style.display = 'block';
     });
   });
 
-  leftRail.querySelector('#canva-collapse-btn').addEventListener('click', () => {
-    document.body.classList.toggle('studio-panel-open');
+  leftRail.querySelector('#studio-drawer-toggle').addEventListener('click', () => {
+    document.body.classList.toggle('studio-drawer-open');
   });
 
+  // Brand Kit bindings
+  const updateBrand = (patch) => {
+    pushUndoSnapshot();
+    editorState.brand = { ...(editorState.brand || {}), ...patch };
+    applyBrandToPage(editorState.brand);
+    scheduleAutoSave();
+  };
+
+  sideDrawer.querySelector('#brand-logo-text-input').addEventListener('input', (e) => updateBrand({ logoText: e.target.value }));
+  sideDrawer.querySelector('#brand-logo-url-input').addEventListener('change', (e) => updateBrand({ logoUrl: e.target.value.trim() }));
+  sideDrawer.querySelector('#brand-primary-color').addEventListener('input', (e) => updateBrand({ primaryColor: e.target.value }));
+  sideDrawer.querySelector('#brand-accent-color').addEventListener('input', (e) => updateBrand({ accentColor: e.target.value }));
+
   // Add text nodes
-  sidePanel.querySelectorAll('[data-add-text]').forEach((btn) => {
+  sideDrawer.querySelectorAll('[data-add-text]').forEach((btn) => {
     btn.addEventListener('click', () => {
       pushUndoSnapshot();
       editorState = captureDomState();
@@ -936,7 +1042,7 @@ function enableCanvaStudio() {
   });
 
   // Add widgets
-  sidePanel.querySelectorAll('[data-add-block]').forEach((btn) => {
+  sideDrawer.querySelectorAll('[data-add-block]').forEach((btn) => {
     btn.addEventListener('click', () => {
       pushUndoSnapshot();
       editorState = captureDomState();
@@ -965,19 +1071,19 @@ function enableCanvaStudio() {
 
   // Uploads gallery & file upload
   const renderUploads = () => {
-    const grid = sidePanel.querySelector('#canva-uploads-grid');
+    const grid = sideDrawer.querySelector('#studio-uploads-grid');
     if (!grid) return;
     const list = editorState.uploads || [];
     if (!list.length) {
-      grid.innerHTML = `<span class="mono" style="grid-column:span 2;color:#6b7280;font-size:0.74rem;">No photos uploaded yet.</span>`;
+      grid.innerHTML = `<span class="mono" style="grid-column:span 2;color:#64748B;font-size:0.74rem;">No photos uploaded yet.</span>`;
       return;
     }
     grid.innerHTML = list
       .map(
         (u) => `
-      <div style="border:1px solid #e2e5ea;border-radius:8px;padding:4px;text-align:center;background:#fafafa;">
+      <div style="border:1px solid #CBD5E1;border-radius:8px;padding:4px;text-align:center;background:#F8FAFC;">
         <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:60px;object-fit:cover;border-radius:6px;display:block;margin-bottom:4px;">
-        <button type="button" data-insert-photo="${u.url}" style="width:100%;padding:4px;font-size:0.7rem;border:1px solid #d5dae2;border-radius:5px;background:#fff;cursor:pointer;">Insert</button>
+        <button type="button" data-insert-photo="${u.url}" class="studio-card-btn" style="width:100%;padding:4px;font-size:0.7rem;">Insert</button>
       </div>`
       )
       .join('');
@@ -998,10 +1104,10 @@ function enableCanvaStudio() {
   };
   renderUploads();
 
-  sidePanel.querySelector('#canva-upload-input').addEventListener('change', async (e) => {
+  sideDrawer.querySelector('#studio-upload-input').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const statusEl = topBar.querySelector('#canva-save-status');
+    const statusEl = topBar.querySelector('#studio-save-status');
     statusEl.textContent = 'Uploading...';
 
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -1030,7 +1136,7 @@ function enableCanvaStudio() {
   });
 
   // Theme & Create Page
-  sidePanel.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
+  sideDrawer.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
     input.addEventListener('input', (e) => {
       pushUndoSnapshot();
       document.documentElement.style.setProperty(e.target.dataset.cssVar, e.target.value);
@@ -1039,8 +1145,8 @@ function enableCanvaStudio() {
     });
   });
 
-  sidePanel.querySelector('#canva-create-page').addEventListener('click', async () => {
-    const slug = sidePanel.querySelector('#canva-new-slug').value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+  sideDrawer.querySelector('#studio-create-page').addEventListener('click', async () => {
+    const slug = sideDrawer.querySelector('#studio-new-slug').value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
     if (!slug) return;
     await supabase.from('site_content').upsert(
       {
@@ -1049,6 +1155,7 @@ function enableCanvaStudio() {
           texts: {},
           textStyles: {},
           colors: editorState.colors || {},
+          brand: editorState.brand || {},
           images: {},
           backgrounds: {},
           uploads: editorState.uploads || [],
@@ -1087,9 +1194,9 @@ function enableCanvaStudio() {
     scheduleAutoSave();
   };
 
-  topBar.querySelector('#canva-undo-btn').addEventListener('click', handleUndo);
-  topBar.querySelector('#canva-redo-btn').addEventListener('click', handleRedo);
-  topBar.querySelector('#canva-save-btn').addEventListener('click', saveNow);
+  topBar.querySelector('#studio-undo-btn').addEventListener('click', handleUndo);
+  topBar.querySelector('#studio-redo-btn').addEventListener('click', handleRedo);
+  topBar.querySelector('#studio-save-btn').addEventListener('click', saveNow);
 
   document.addEventListener(
     'keydown',
