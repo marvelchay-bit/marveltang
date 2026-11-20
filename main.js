@@ -19,6 +19,20 @@ function getCurrentPageKey() {
   return `page:${baseName}`;
 }
 
+function getPageTargetUrl(pageSlug, editMode = false) {
+  const isSub = window.location.pathname.includes('/pages/');
+  const prefix = isSub ? '../' : '';
+  const map = {
+    index: `${prefix}index.html`,
+    blog: isSub ? 'blog.html' : 'pages/blog.html',
+    about: isSub ? 'about.html' : 'pages/about.html',
+    project: isSub ? 'project.html' : 'pages/project.html'
+  };
+  const base = map[pageSlug] || `${prefix}index.html?page=${encodeURIComponent(pageSlug)}`;
+  const sep = base.includes('?') ? '&' : '?';
+  return editMode ? `${base}${sep}edit=true` : base;
+}
+
 const PAGE_ID = getCurrentPageKey();
 
 let editorState = {
@@ -572,6 +586,25 @@ function renderDynamicBlocks(blocks, isEditMode) {
   });
 }
 
+function hydrateStateObject(raw) {
+  if (!raw) return;
+  editorState = {
+    texts: raw.texts || {},
+    textStyles: raw.textStyles || {},
+    colors: raw.colors || {},
+    brand: {
+      logoText: raw.brand?.logoText || 'MARVEL TANG',
+      logoUrl: raw.brand?.logoUrl || '',
+      primaryColor: raw.brand?.primaryColor || '#0F172A',
+      accentColor: raw.brand?.accentColor || '#71869A'
+    },
+    images: raw.images || {},
+    backgrounds: raw.backgrounds || {},
+    uploads: raw.uploads || [],
+    blocks: raw.blocks || []
+  };
+}
+
 function applyStateToDom(state, isEditMode) {
   applyBrandToPage(state.brand || {});
 
@@ -611,7 +644,7 @@ async function loadSavedSiteContent(isEditMode = false) {
     const idsToCheck = PAGE_ID === 'page:index' ? ['page:index', 'main'] : [PAGE_ID];
     const { data, error } = await supabase
       .from('site_content')
-      .select('id, content, updated_at')
+      .select('id, content, draft_content, updated_at')
       .in('id', idsToCheck);
 
     if (error) {
@@ -621,23 +654,12 @@ async function loadSavedSiteContent(isEditMode = false) {
 
     if (data && data.length > 0) {
       const record = data.find((row) => row.id === PAGE_ID) || data[0];
-      if (record?.content) {
-        editorState = {
-          texts: record.content.texts || {},
-          textStyles: record.content.textStyles || {},
-          colors: record.content.colors || {},
-          brand: {
-            logoText: record.content.brand?.logoText || 'MARVEL TANG',
-            logoUrl: record.content.brand?.logoUrl || '',
-            primaryColor: record.content.brand?.primaryColor || '#0F172A',
-            accentColor: record.content.brand?.accentColor || '#71869A'
-          },
-          images: record.content.images || {},
-          backgrounds: record.content.backgrounds || {},
-          uploads: record.content.uploads || [],
-          blocks: record.content.blocks || []
-        };
-      }
+      // Admin in edit mode sees working draft if available; public visitors see published `content`
+      const chosenPayload = isEditMode
+        ? (record.draft_content || record.content)
+        : (record.content || record.draft_content);
+
+      hydrateStateObject(chosenPayload);
     }
 
     const { data: bucketFiles } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 50 });
@@ -663,18 +685,45 @@ async function loadSavedSiteContent(isEditMode = false) {
   }
 }
 
-async function saveNow() {
+async function saveDraftNow() {
   const statusEl = document.getElementById('studio-save-status');
   editorState = captureDomState();
   const payloadContent = cloneState(editorState);
 
-  if (statusEl) statusEl.textContent = 'Saving...';
+  if (statusEl) statusEl.textContent = 'Saving draft...';
 
   const { error } = await supabase
     .from('site_content')
     .upsert(
       {
         id: PAGE_ID,
+        draft_content: payloadContent,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    );
+
+  if (error) {
+    console.error('Draft save error:', error);
+    if (statusEl) statusEl.textContent = `Draft failed: ${error.message}`;
+  } else if (statusEl) {
+    statusEl.textContent = `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+}
+
+async function publishLiveNow() {
+  const statusEl = document.getElementById('studio-save-status');
+  editorState = captureDomState();
+  const payloadContent = cloneState(editorState);
+
+  if (statusEl) statusEl.textContent = 'Publishing...';
+
+  const { error } = await supabase
+    .from('site_content')
+    .upsert(
+      {
+        id: PAGE_ID,
+        draft_content: payloadContent,
         content: payloadContent,
         updated_at: new Date().toISOString()
       },
@@ -682,19 +731,19 @@ async function saveNow() {
     );
 
   if (error) {
-    console.error('Supabase save error:', error);
-    if (statusEl) statusEl.textContent = `Save failed: ${error.message}`;
+    console.error('Publish error:', error);
+    if (statusEl) statusEl.textContent = `Publish failed: ${error.message}`;
   } else if (statusEl) {
-    statusEl.textContent = `Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    statusEl.textContent = `Published ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }
 }
 
 function scheduleAutoSave() {
   const statusEl = document.getElementById('studio-save-status');
-  if (statusEl) statusEl.textContent = 'Unsaved...';
+  if (statusEl) statusEl.textContent = 'Unsaved draft...';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
-    saveNow();
+    saveDraftNow();
   }, 1500);
 }
 
@@ -722,9 +771,31 @@ async function getAuthenticatedSession() {
   return null;
 }
 
+function bindRollDownMenu() {
+  const menuBtn = document.getElementById('nav-menu-toggle');
+  const rollMenu = document.getElementById('site-roll-menu');
+  if (!menuBtn || !rollMenu || menuBtn.dataset.bound) return;
+  menuBtn.dataset.bound = 'true';
+
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = rollMenu.classList.toggle('open');
+    menuBtn.setAttribute('aria-expanded', String(open));
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!rollMenu.contains(e.target) && e.target !== menuBtn) {
+      rollMenu.classList.remove('open');
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
 async function runPageApp() {
   if (studioInitialized) return;
   studioInitialized = true;
+
+  bindRollDownMenu();
 
   const urlParams = new URLSearchParams(window.location.search);
   const isEditMode = urlParams.get('edit') === 'true';
@@ -772,7 +843,6 @@ function enableWhiteCanvaStudio() {
 
   const computedStyles = getComputedStyle(document.documentElement);
 
-  // Top Bar (White with contrasting border)
   const topBar = document.createElement('header');
   topBar.id = 'studio-top-bar';
   topBar.innerHTML = `
@@ -781,16 +851,16 @@ function enableWhiteCanvaStudio() {
       <span class="mono" style="font-size:0.74rem;color:#475569;border:1px solid #CBD5E1;padding:2px 6px;border-radius:5px;background:#F8FAFC;">${PAGE_ID}</span>
       <button type="button" id="studio-undo-btn" title="Undo (Cmd+Z)" class="studio-card-btn" style="padding:4px 8px;">↶</button>
       <button type="button" id="studio-redo-btn" title="Redo (Cmd+Y)" class="studio-card-btn" style="padding:4px 8px;">↷</button>
-      <span id="studio-save-status" class="mono" style="font-size:0.72rem;color:#334155;">Auto-save ready</span>
+      <span id="studio-save-status" class="mono" style="font-size:0.72rem;color:#334155;">Draft mode</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-      <button type="button" id="studio-save-btn" style="background:#0F172A;color:#FFFFFF;border:1px solid #0F172A;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.76rem;cursor:pointer;">Save</button>
+      <button type="button" id="studio-save-draft-btn" class="studio-card-btn">Save Draft</button>
+      <button type="button" id="studio-publish-btn" style="background:#0F172A;color:#FFFFFF;border:1px solid #0F172A;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.76rem;cursor:pointer;">Publish</button>
       <a href="${window.location.pathname}" class="studio-card-btn" style="text-decoration:none;">View Live</a>
     </div>
   `;
   document.body.appendChild(topBar);
 
-  // Format Bar (White with contrasting border, fonts, size, colors, transparency, effects, animation)
   const formatBar = document.createElement('div');
   formatBar.id = 'studio-format-bar';
   formatBar.innerHTML = `
@@ -831,45 +901,61 @@ function enableWhiteCanvaStudio() {
   `;
   document.body.appendChild(formatBar);
 
-  // Full-height Left Icon Rail (flush left edge, top to bottom)
   const leftRail = document.createElement('nav');
   leftRail.id = 'studio-left-rail';
   leftRail.innerHTML = `
     <button type="button" class="studio-rail-btn active" data-panel="widgets"><span>❖</span><span>Widgets</span></button>
     <button type="button" class="studio-rail-btn" data-panel="text"><span>T</span><span>Text</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="pages"><span>📄</span><span>Pages</span></button>
     <button type="button" class="studio-rail-btn" data-panel="uploads"><span>☁</span><span>Uploads</span></button>
     <button type="button" class="studio-rail-btn" data-panel="brand"><span>★</span><span>Brand</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="theme"><span>◐</span><span>Theme/Pg</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="theme"><span>◐</span><span>Theme</span></button>
     <button type="button" class="studio-rail-btn" id="studio-drawer-toggle" title="Toggle Drawer" style="margin-top:auto;"><span>⟨</span><span>Drawer</span></button>
   `;
   document.body.appendChild(leftRail);
 
-  // Full-height Left Side Drawer (flush against left rail, top to bottom)
   const sideDrawer = document.createElement('aside');
   sideDrawer.id = 'studio-side-drawer';
   sideDrawer.innerHTML = `
     <div id="spanel-widgets" class="spanel-view">
       <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Widgets</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <button type="button" data-add-block="divider" class="studio-card-btn">Horizontal Line</button>
-        <button type="button" data-add-block="pdf" class="studio-card-btn">PDF Embed</button>
-        <button type="button" data-add-block="author" class="studio-card-btn">Author Card</button>
-        <button type="button" data-add-block="video" class="studio-card-btn">YouTube Video</button>
-        <button type="button" data-add-block="quiz" class="studio-card-btn">Quiz</button>
-        <button type="button" data-add-block="survey" class="studio-card-btn">Poll</button>
-        <button type="button" data-add-block="table" class="studio-card-btn">Table</button>
-        <button type="button" data-add-block="chart" class="studio-card-btn">Chart</button>
-        <button type="button" data-add-block="references" class="studio-card-btn" style="grid-column:span 2;">References Section</button>
+        <button type="button" data-add-block="divider" class="studio-widget-btn"><span class="studio-widget-icon">―</span><span>Line</span></button>
+        <button type="button" data-add-block="pdf" class="studio-widget-btn"><span class="studio-widget-icon">📄</span><span>PDF</span></button>
+        <button type="button" data-add-block="author" class="studio-widget-btn"><span class="studio-widget-icon">👤</span><span>Author</span></button>
+        <button type="button" data-add-block="video" class="studio-widget-btn"><span class="studio-widget-icon">▶</span><span>Video</span></button>
+        <button type="button" data-add-block="quiz" class="studio-widget-btn"><span class="studio-widget-icon">❓</span><span>Quiz</span></button>
+        <button type="button" data-add-block="survey" class="studio-widget-btn"><span class="studio-widget-icon">📊</span><span>Poll</span></button>
+        <button type="button" data-add-block="table" class="studio-widget-btn"><span class="studio-widget-icon">▦</span><span>Table</span></button>
+        <button type="button" data-add-block="chart" class="studio-widget-btn"><span class="studio-widget-icon">📈</span><span>Chart</span></button>
+        <button type="button" data-add-block="references" class="studio-widget-btn" style="grid-column:span 2;"><span class="studio-widget-icon">📚</span><span>References Section</span></button>
       </div>
     </div>
 
     <div id="spanel-text" class="spanel-view" style="display:none;">
       <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Text Elements</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" data-add-text="h1" class="studio-card-btn" style="text-align:left;font-size:1.15rem;font-weight:700;">Add Heading (H1)</button>
-        <button type="button" data-add-text="h2" class="studio-card-btn" style="text-align:left;font-size:1rem;font-weight:600;">Add Subheading (H2)</button>
-        <button type="button" data-add-text="h3" class="studio-card-btn" style="text-align:left;font-size:0.9rem;font-weight:600;">Add Title (H3)</button>
-        <button type="button" data-add-text="p" class="studio-card-btn" style="text-align:left;">Add normal text</button>
+        <button type="button" data-add-text="h1" class="studio-widget-btn" style="font-size:1.05rem;font-weight:700;"><span class="studio-widget-icon">H1</span><span>Add Heading</span></button>
+        <button type="button" data-add-text="h2" class="studio-widget-btn" style="font-size:0.95rem;font-weight:600;"><span class="studio-widget-icon">H2</span><span>Add Subheading</span></button>
+        <button type="button" data-add-text="h3" class="studio-widget-btn" style="font-weight:600;"><span class="studio-widget-icon">H3</span><span>Add Title</span></button>
+        <button type="button" data-add-text="p" class="studio-widget-btn"><span class="studio-widget-icon">¶</span><span>Add normal text</span></button>
+      </div>
+    </div>
+
+    <div id="spanel-pages" class="spanel-view" style="display:none;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Switch Page in Editor</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+        <a href="${getPageTargetUrl('index', true)}" class="studio-card-btn" style="text-decoration:none;">🏠 Home (index)</a>
+        <a href="${getPageTargetUrl('blog', true)}" class="studio-card-btn" style="text-decoration:none;">✍️ Blog</a>
+        <a href="${getPageTargetUrl('about', true)}" class="studio-card-btn" style="text-decoration:none;">ℹ️ About</a>
+        <a href="${getPageTargetUrl('project', true)}" class="studio-card-btn" style="text-decoration:none;">💼 Projects</a>
+      </div>
+      <div style="border-top:1.5px solid #CBD5E1;padding-top:12px;">
+        <div style="font-weight:600;font-size:0.78rem;margin-bottom:6px;">Create Custom Page</div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="studio-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+          <button type="button" id="studio-create-page" style="padding:6px 10px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
+        </div>
       </div>
     </div>
 
@@ -887,7 +973,7 @@ function enableWhiteCanvaStudio() {
           <input type="text" id="brand-logo-text-input" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
         </label>
         <label style="font-size:0.76rem;font-weight:600;">
-          Brand Logo Image URL (optional)
+          Brand Logo Image URL
           <input type="text" id="brand-logo-url-input" value="${editorState.brand?.logoUrl || ''}" placeholder="https://..." style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
         </label>
         <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.76rem;font-weight:600;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;">
@@ -902,25 +988,17 @@ function enableWhiteCanvaStudio() {
     </div>
 
     <div id="spanel-theme" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Theme & Pages</div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Theme Colors</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
         <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
         <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
         <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
         <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
       </div>
-      <div style="border-top:1.5px solid #CBD5E1;padding-top:12px;">
-        <div style="font-weight:600;font-size:0.78rem;margin-bottom:6px;">Create New Page</div>
-        <div style="display:flex;gap:6px;">
-          <input type="text" id="studio-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
-          <button type="button" id="studio-create-page" style="padding:6px 10px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
-        </div>
-      </div>
     </div>
   `;
   document.body.appendChild(sideDrawer);
 
-  // Make static [data-edit-text] elements editable and selectable
   document.querySelectorAll('[data-edit-text]').forEach((el) => {
     if (isStudioUiNode(el)) return;
     const sKey = el.dataset.editText;
@@ -940,7 +1018,6 @@ function enableWhiteCanvaStudio() {
     });
   });
 
-  // Format bar actions including Transparency (opacity)
   const patchActiveStyle = (patch) => {
     if (!activeEditableEl || !activeStyleKey) return;
     pushUndoSnapshot();
@@ -994,7 +1071,6 @@ function enableWhiteCanvaStudio() {
     scheduleAutoSave();
   });
 
-  // Left rail switching & drawer toggle
   const railBtns = leftRail.querySelectorAll('.studio-rail-btn[data-panel]');
   const panelViews = sideDrawer.querySelectorAll('.spanel-view');
   railBtns.forEach((btn) => {
@@ -1011,7 +1087,6 @@ function enableWhiteCanvaStudio() {
     document.body.classList.toggle('studio-drawer-open');
   });
 
-  // Brand Kit bindings
   const updateBrand = (patch) => {
     pushUndoSnapshot();
     editorState.brand = { ...(editorState.brand || {}), ...patch };
@@ -1024,7 +1099,6 @@ function enableWhiteCanvaStudio() {
   sideDrawer.querySelector('#brand-primary-color').addEventListener('input', (e) => updateBrand({ primaryColor: e.target.value }));
   sideDrawer.querySelector('#brand-accent-color').addEventListener('input', (e) => updateBrand({ accentColor: e.target.value }));
 
-  // Add text nodes
   sideDrawer.querySelectorAll('[data-add-text]').forEach((btn) => {
     btn.addEventListener('click', () => {
       pushUndoSnapshot();
@@ -1041,7 +1115,6 @@ function enableWhiteCanvaStudio() {
     });
   });
 
-  // Add widgets
   sideDrawer.querySelectorAll('[data-add-block]').forEach((btn) => {
     btn.addEventListener('click', () => {
       pushUndoSnapshot();
@@ -1069,7 +1142,6 @@ function enableWhiteCanvaStudio() {
     });
   });
 
-  // Uploads gallery & file upload
   const renderUploads = () => {
     const grid = sideDrawer.querySelector('#studio-uploads-grid');
     if (!grid) return;
@@ -1132,10 +1204,9 @@ function enableWhiteCanvaStudio() {
     });
     renderUploads();
     renderDynamicBlocks(editorState.blocks, true);
-    await saveNow();
+    await saveDraftNow();
   });
 
-  // Theme & Create Page
   sideDrawer.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
     input.addEventListener('input', (e) => {
       pushUndoSnapshot();
@@ -1148,19 +1219,21 @@ function enableWhiteCanvaStudio() {
   sideDrawer.querySelector('#studio-create-page').addEventListener('click', async () => {
     const slug = sideDrawer.querySelector('#studio-new-slug').value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
     if (!slug) return;
+    const starter = {
+      texts: {},
+      textStyles: {},
+      colors: editorState.colors || {},
+      brand: editorState.brand || {},
+      images: {},
+      backgrounds: {},
+      uploads: editorState.uploads || [],
+      blocks: [{ id: `blk_${Date.now()}`, type: 'text-node', tag: 'h1', content: slug.toUpperCase() }]
+    };
     await supabase.from('site_content').upsert(
       {
         id: `page:${slug}`,
-        content: {
-          texts: {},
-          textStyles: {},
-          colors: editorState.colors || {},
-          brand: editorState.brand || {},
-          images: {},
-          backgrounds: {},
-          uploads: editorState.uploads || [],
-          blocks: [{ id: `blk_${Date.now()}`, type: 'text-node', tag: 'h1', content: slug.toUpperCase() }]
-        },
+        draft_content: starter,
+        content: starter,
         updated_at: new Date().toISOString()
       },
       { onConflict: 'id' }
@@ -1171,7 +1244,6 @@ function enableWhiteCanvaStudio() {
     window.location.href = url.toString();
   });
 
-  // Undo / Redo / Save
   const handleUndo = () => {
     if (!undoStack.length) return;
     redoStack.push(captureDomState());
@@ -1196,7 +1268,8 @@ function enableWhiteCanvaStudio() {
 
   topBar.querySelector('#studio-undo-btn').addEventListener('click', handleUndo);
   topBar.querySelector('#studio-redo-btn').addEventListener('click', handleRedo);
-  topBar.querySelector('#studio-save-btn').addEventListener('click', saveNow);
+  topBar.querySelector('#studio-save-draft-btn').addEventListener('click', saveDraftNow);
+  topBar.querySelector('#studio-publish-btn').addEventListener('click', publishLiveNow);
 
   document.addEventListener(
     'keydown',

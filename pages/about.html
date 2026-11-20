@@ -7,25 +7,28 @@
   <link rel="stylesheet" href="../style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-  <!-- Navigation Ribbon -->
+  <!-- Clean Top Ribbon -->
   <header class="nav-ribbon">
     <div class="nav-container">
       <a href="../index.html" class="brand-logo" data-edit-text="about-brand-logo">MARVEL TANG</a>
-      <nav class="nav-links">
-        <a href="../index.html" class="nav-item">Home</a>
-        <a href="blog.html" class="nav-item">Blog</a>
-        <a href="about.html" class="nav-item active">About</a>
-        <a href="project.html" class="nav-item">Projects</a>
-      </nav>
-      <div class="nav-actions">
-        <button id="theme-toggle" aria-label="Toggle theme">Theme</button>
+      <div class="nav-actions" style="display:flex;gap:8px;align-items:center;">
+        <button id="theme-toggle" class="menu-trigger-btn" aria-label="Toggle theme">Theme</button>
+        <button id="nav-menu-toggle" class="menu-trigger-btn" aria-expanded="false" aria-controls="site-roll-menu">Menu ▾</button>
       </div>
     </div>
   </header>
+
+  <!-- Roll-Down Navigation Drawer -->
+  <nav id="site-roll-menu" class="roll-down-menu" aria-label="Site Navigation">
+    <a href="../index.html">Home</a>
+    <a href="blog.html">Blog</a>
+    <a href="about.html">About</a>
+    <a href="project.html">Projects</a>
+  </nav>
 
   <!-- Main About Content -->
   <main class="content-wrapper">

@@ -7,29 +7,32 @@
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
-  <!-- Navigation Ribbon -->
+  <!-- Clean Top Ribbon -->
   <header class="nav-ribbon">
     <div class="nav-container">
       <a href="index.html" class="brand-logo" data-edit-text="brand-logo">MARVEL TANG</a>
-      <nav class="nav-links">
-        <a href="index.html" class="nav-item active">Home</a>
-        <a href="pages/blog.html" class="nav-item">Blog</a>
-        <a href="pages/about.html" class="nav-item">About</a>
-        <a href="pages/project.html" class="nav-item">Projects</a>
-      </nav>
-      <div class="nav-actions">
-        <button id="theme-toggle" aria-label="Toggle theme">Theme</button>
+      <div class="nav-actions" style="display:flex;gap:8px;align-items:center;">
+        <button id="theme-toggle" class="menu-trigger-btn" aria-label="Toggle theme">Theme</button>
+        <button id="nav-menu-toggle" class="menu-trigger-btn" aria-expanded="false" aria-controls="site-roll-menu">Menu ▾</button>
       </div>
     </div>
   </header>
 
+  <!-- Roll-Down Navigation Drawer -->
+  <nav id="site-roll-menu" class="roll-down-menu" aria-label="Site Navigation">
+    <a href="index.html">Home</a>
+    <a href="pages/blog.html">Blog</a>
+    <a href="pages/about.html">About</a>
+    <a href="pages/project.html">Projects</a>
+  </nav>
+
   <!-- Main Homepage Content -->
   <main class="content-wrapper">
-    
+
     <!-- Hero Section -->
     <section class="hero-section">
       <div class="hero-meta"><span class="mono" data-edit-text="hero-index">001</span> // INDEX & PUBLICATION</div>
@@ -37,7 +40,7 @@
       <p class="hero-subtitle" data-edit-text="hero-subtitle">
         Exploring the strategies behind brands, the psychology behind consumers, and the decisions that shape businesses.
       </p>
-      
+
       <!-- What I Do / Focus Tags -->
       <div class="focus-tags">
         <span class="mono tag-pill" data-edit-text="tag-1">Marketing Strategy</span>
@@ -46,7 +49,7 @@
         <span class="mono tag-pill" data-edit-text="tag-4">Vlog Production</span>
         <span class="mono tag-pill" data-edit-text="tag-5">Digital Media</span>
       </div>
-      
+
       <!-- Dreamcore Atmospheric Visual Banner -->
       <div class="dreamcore-banner" data-edit-bg="dreamcore-banner">
         <div class="banner-content">
@@ -64,91 +67,63 @@
     <!-- Why Me Section -->
     <section class="section-block">
       <div class="section-header">
-        <span class="mono" data-edit-text="why-label">PERSPECTIVE & APPROACH</span>
-        <h2 data-edit-text="why-heading">Why Marvel?</h2>
+        <span class="mono" data-edit-text="why-kicker">002 // PERSPECTIVE</span>
+        <h2 data-edit-text="why-title">Why Me</h2>
       </div>
       <div class="cards-grid">
         <article class="featured-card">
-          <span class="mono" data-edit-text="card1-label">ANALYTICAL RIGOR</span>
-          <h3 style="margin-top: 10px;" data-edit-text="card1-title">Grounded in Research</h3>
-          <p data-edit-text="card1-body">As a Marketing and Management student at HKUST, my approach merges academic foundations with real-world experimentation, focusing on rigorous investigation rather than generic advice.</p>
+          <span class="mono" data-edit-text="why-card1-tag">EMPIRICAL & ANALYTICAL</span>
+          <h3 data-edit-text="why-card1-title">Strategy grounded in observation</h3>
+          <p data-edit-text="why-card1-body">Combining quantitative consumer modeling with field observations across Hong Kong and Southeast Asian markets.</p>
         </article>
         <article class="featured-card">
-          <span class="mono" data-edit-text="card2-label">CREATIVE EXECUTION</span>
-          <h3 style="margin-top: 10px;" data-edit-text="card2-title">Visual Storytelling</h3>
-          <p data-edit-text="card2-body">Beyond strategy, I actively produce and document stories through travel vlogs, spatial UI prototypes, and digital media production, testing how people engage with content firsthand.</p>
+          <span class="mono" data-edit-text="why-card2-tag">VISUAL & TECHNICAL</span>
+          <h3 data-edit-text="why-card2-title">Design meets execution</h3>
+          <p data-edit-text="why-card2-body">Building interactive digital tools, color-graded visual logs, and clear strategic frameworks from scratch.</p>
         </article>
       </div>
     </section>
 
-    <!-- Featured YouTube Vlog Log -->
+    <!-- Featured Writing -->
     <section class="section-block">
       <div class="section-header">
-        <span class="mono">VISUAL JOURNAL / YOUTUBE VLOG</span>
-        <h2 data-edit-text="vlog-heading">Latest Field Log</h2>
+        <span class="mono" data-edit-text="writing-kicker">003 // FEATURED WRITING</span>
+        <h2 data-edit-text="writing-title">Latest Strategic Notes</h2>
       </div>
-      <article class="featured-card">
-        <div class="featured-meta">
-          <span class="mono">TRAVEL VLOG & EDITORIAL</span>
-          <span class="mono">YOUTUBE EPISODE</span>
-        </div>
-        <h3 data-edit-text="vlog-title">Documenting itineraries and regional perspectives</h3>
-        <p data-edit-text="vlog-desc">A visual log capturing regional travel experiences, camera operation, and color grading exploration.</p>
-        
-        <!-- Embedded YouTube Video Container -->
-        <div class="embed-container">
-          <iframe 
-            src="https://www.youtube-nocookie.com/embed/YOUR_YOUTUBE_VIDEO_ID" 
-            title="Marvel Tang YouTube Vlog" 
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-            allowfullscreen>
-          </iframe>
-        </div>
-      </article>
-    </section>
-
-    <!-- Featured Spatial Project: HKUST Butterfly Garden Virtual Tour -->
-    <section class="section-block">
-      <div class="section-header">
-        <span class="mono">INTERACTIVE SPATIAL PROJECT</span>
-        <h2 data-edit-text="spatial-heading">HKUST Butterfly Garden 3D Tour</h2>
-      </div>
-      <article class="featured-card spatial-card">
-        <div class="featured-meta">
-          <span class="mono">SPATIAL UI / DATA VISUALIZATION</span>
-          <span class="mono">LIVE INTERACTIVE EMBED</span>
-        </div>
-        <h3 data-edit-text="spatial-title">Exploring ecological spaces digitally</h3>
-        <p data-edit-text="spatial-desc">An interactive 3D virtual tour map designed to showcase campus biodiversity and open spatial data assets.</p>
-        
-        <!-- Embedded Virtual Tour Container -->
-        <div class="embed-container">
-          <iframe 
-            src="https://spatialis-view-flow.base44.app/tour?id=69de160a2dd6438b7ca32ef7" 
-            title="HKUST Butterfly Garden Virtual Tour" 
-            loading="lazy"
-            allowfullscreen>
-          </iframe>
-        </div>
-      </article>
-    </section>
-
-    <!-- Newsletter Section -->
-    <section id="newsletter" class="newsletter-block">
-      <div class="newsletter-card">
-        <span class="mono" data-edit-text="news-label">THE NOTES BEHIND THE NOISE</span>
-        <h2 data-edit-text="news-title">Thoughtful breakdowns without generic advice.</h2>
-        <p data-edit-text="news-desc">Get research, consumer behavior analysis, and practical strategies delivered directly to your inbox.</p>
-        <form class="newsletter-form" onsubmit="event.preventDefault(); alert('Thank you for subscribing.');">
-          <input type="email" placeholder="Enter your email address" required />
-          <button type="submit">Subscribe</button>
-        </form>
+      <div class="cards-grid">
+        <article class="featured-card">
+          <div class="featured-meta">
+            <span class="mono">BRAND INVESTIGATIONS</span>
+            <span class="mono">6 MIN READ</span>
+          </div>
+          <h3 data-edit-text="home-post1-title">Does distribution prove marketing success?</h3>
+          <p data-edit-text="home-post1-body">An analytical look at how physical availability often masks underlying positioning vulnerabilities in emerging retail markets.</p>
+          <a href="pages/blog.html" class="read-link">Read in Blog →</a>
+        </article>
+        <article class="featured-card">
+          <div class="featured-meta">
+            <span class="mono">CONSUMER PSYCHOLOGY</span>
+            <span class="mono">4 MIN READ</span>
+          </div>
+          <h3 data-edit-text="home-post2-title">Why consumers say one thing and buy another</h3>
+          <p data-edit-text="home-post2-body">Exploring the gap between stated preference and revealed purchasing behavior in market research.</p>
+          <a href="pages/blog.html" class="read-link">Read in Blog →</a>
+        </article>
       </div>
     </section>
 
-    <!-- Dynamic Blocks Container (Sections, Quizzes, Surveys, Tables, Charts) -->
+    <!-- Dynamic Studio Widgets Container -->
     <div id="dynamic-blocks-container"></div>
+
+    <!-- Newsletter Anchor -->
+    <section id="newsletter" class="section-block">
+      <div class="featured-card">
+        <span class="mono">DISPATCH</span>
+        <h3 data-edit-text="newsletter-title" style="margin-top:8px;">Stay updated with new investigations</h3>
+        <p data-edit-text="newsletter-desc">Occasional essays on marketing strategy, consumer behavior, and digital builds.</p>
+        <a href="mailto:marveltang71@gmail.com?subject=Newsletter%20Subscription" class="btn btn-primary" style="display:inline-block;margin-top:10px;">Subscribe via Email</a>
+      </div>
+    </section>
 
   </main>
 
@@ -178,7 +153,6 @@
     </div>
   </footer>
 
-  <!-- Chart.js for Chart Widgets -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script type="module" src="main.js"></script>
 </body>
