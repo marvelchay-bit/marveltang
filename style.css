@@ -245,9 +245,8 @@ body {
 }
 
 .full-image-overlay-copy {
-  position: relative;
-  z-index: 2;
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   bottom: 0;
@@ -651,6 +650,13 @@ body.studio-mode .global-footer {
   transition: max-width 0.22s ease, padding 0.22s ease;
 }
 
+/* Drop Zone Highlight When Dragging Widgets/Layouts Onto Canvas */
+body.studio-mode .studio-drop-active {
+  outline: 2.5px dashed #2563EB !important;
+  outline-offset: 6px;
+  background-color: rgba(37, 99, 235, 0.04) !important;
+}
+
 /* Tablet View Mode inside Studio */
 body.studio-mode.studio-device-tablet .content-wrapper,
 body.studio-mode.studio-device-tablet .global-footer {
@@ -664,7 +670,7 @@ body.studio-mode.studio-device-tablet .footer-container {
   grid-template-columns: 1fr !important;
 }
 
-/* Mobile View Mode inside Studio */
+/* Mobile / Phone View Mode inside Studio */
 body.studio-mode.studio-device-mobile .content-wrapper,
 body.studio-mode.studio-device-mobile .global-footer {
   max-width: 390px !important;
@@ -1095,7 +1101,7 @@ body.studio-mode.studio-drawer-open #studio-side-drawer {
   border-color: #111827;
 }
 
-/* Visual Widget Cards with Mini Previews */
+/* Visual Widget Cards with Mini Previews (Draggable onto Page) */
 .studio-widget-card {
   display: flex;
   flex-direction: column;
@@ -1106,8 +1112,12 @@ body.studio-mode.studio-drawer-open #studio-side-drawer {
   border: 1px solid var(--studio-border);
   border-radius: 10px;
   padding: 10px;
-  cursor: pointer;
+  cursor: grab;
   transition: all 0.15s ease;
+}
+
+.studio-widget-card:active {
+  cursor: grabbing;
 }
 
 .studio-widget-card:hover {

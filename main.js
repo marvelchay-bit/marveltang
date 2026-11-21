@@ -92,6 +92,7 @@ let studioInitialized = false;
 let magnetEnabled = true;
 let isDraggingGuide = false;
 let boxTransformSession = null;
+let draggedCatalogItem = null;
 const chartInstances = new Map();
 
 function cloneState(obj) {
@@ -465,7 +466,6 @@ function attachSixDotsAndMovePill(boxEl, boxKey) {
   });
 }
 
-/* Horizontal Height & Gap Measurement Lines When Dragging/Resizing Boxes */
 function updateHeightMeasurementLines(boxEl) {
   const overlay = document.getElementById('studio-spatial-overlay');
   const badge = document.getElementById('studio-spatial-badge');
@@ -635,6 +635,66 @@ function openImageSlotPopover(slotInfo) {
   });
 }
 
+function normalizeFontFamilyName(rawFont = '') {
+  return String(rawFont)
+    .split(',')[0]
+    .replace(/^['"]+|['"]+$/g, '')
+    .trim();
+}
+
+function syncFormatBarToElement(el, styleKey) {
+  const bar = document.getElementById('studio-format-bar');
+  if (!bar || !el) return;
+  const st = editorState.textStyles?.[styleKey] || {};
+  const computed = getComputedStyle(el);
+  const computedPx = parseInt(computed.fontSize, 10) || 18;
+  const currentOpacity =
+    st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(computed.opacity || 1);
+
+  const textColorInput = bar.querySelector('#fmt-text-color');
+  const dropColorInput = bar.querySelector('#fmt-drop-color');
+  const fontFamilySelect = bar.querySelector('#fmt-font-family');
+  const fontSizeInput = bar.querySelector('#fmt-font-size');
+  const opacityInput = bar.querySelector('#fmt-opacity');
+  const opacityVal = bar.querySelector('#fmt-opacity-val');
+
+  if (textColorInput) textColorInput.value = rgbOrHexToHex(st.color || computed.color, '#202124');
+  if (dropColorInput) dropColorInput.value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
+  if (fontSizeInput) fontSizeInput.value = st.fontSize || computedPx;
+  if (opacityInput) opacityInput.value = Math.round(currentOpacity * 100);
+  if (opacityVal) opacityVal.textContent = `${Math.round(currentOpacity * 100)}%`;
+
+  if (fontFamilySelect) {
+    fontFamilySelect.querySelectorAll('option[data-dynamic-font="1"]').forEach((opt) => opt.remove());
+
+    const activeFontValue = st.fontFamily || '';
+    const computedCleanName = normalizeFontFamilyName(computed.fontFamily);
+
+    let matchedOption = Array.from(fontFamilySelect.options).find(
+      (opt) => opt.value && opt.value.toLowerCase() === activeFontValue.toLowerCase()
+    );
+
+    if (!matchedOption && computedCleanName) {
+      matchedOption = Array.from(fontFamilySelect.options).find(
+        (opt) => opt.value && normalizeFontFamilyName(opt.value).toLowerCase() === computedCleanName.toLowerCase()
+      );
+    }
+
+    if (matchedOption) {
+      fontFamilySelect.value = matchedOption.value;
+    } else if (computedCleanName) {
+      const dynOpt = document.createElement('option');
+      dynOpt.value = activeFontValue || computed.fontFamily;
+      dynOpt.textContent = `${computedCleanName} (Active)`;
+      dynOpt.dataset.dynamicFont = '1';
+      fontFamilySelect.insertBefore(dynOpt, fontFamilySelect.firstChild);
+      fontFamilySelect.value = dynOpt.value;
+    } else {
+      fontFamilySelect.value = '';
+    }
+  }
+}
+
 function selectEditableElement(el, styleKey) {
   if (activeEditableEl && activeEditableEl !== el) {
     activeEditableEl.classList.remove('studio-selected-outline');
@@ -653,29 +713,6 @@ function selectEditableElement(el, styleKey) {
     attachSixDotsAndMovePill(boxCandidate, boxKey);
     updateHeightMeasurementLines(boxCandidate);
   }
-}
-
-function syncFormatBarToElement(el, styleKey) {
-  const bar = document.getElementById('studio-format-bar');
-  if (!bar || !el) return;
-  const st = editorState.textStyles?.[styleKey] || {};
-  const computedPx = parseInt(getComputedStyle(el).fontSize, 10) || 18;
-  const currentOpacity =
-    st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(getComputedStyle(el).opacity || 1);
-
-  const textColorInput = bar.querySelector('#fmt-text-color');
-  const dropColorInput = bar.querySelector('#fmt-drop-color');
-  const fontFamilySelect = bar.querySelector('#fmt-font-family');
-  const fontSizeInput = bar.querySelector('#fmt-font-size');
-  const opacityInput = bar.querySelector('#fmt-opacity');
-  const opacityVal = bar.querySelector('#fmt-opacity-val');
-
-  if (textColorInput) textColorInput.value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#202124');
-  if (dropColorInput) dropColorInput.value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
-  if (fontFamilySelect) fontFamilySelect.value = st.fontFamily || '';
-  if (fontSizeInput) fontSizeInput.value = st.fontSize || computedPx;
-  if (opacityInput) opacityInput.value = Math.round(currentOpacity * 100);
-  if (opacityVal) opacityVal.textContent = `${Math.round(currentOpacity * 100)}%`;
 }
 
 function updateSelectedElementStyle(patch) {
@@ -944,7 +981,7 @@ function bindEditableTargets() {
   });
 }
 
-function bindCarouselControls(wrapper, block, isEditMode) {
+function bindCarouselControls(wrapper, block) {
   const slides = Array.isArray(block.slides) && block.slides.length
     ? block.slides
     : [
@@ -1250,7 +1287,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
           </div>
         </div>
       `;
-      bindCarouselControls(wrapper, block, isEditMode);
+      bindCarouselControls(wrapper, block);
     } else if (block.type === 'template') {
       wrapper.innerHTML = `
         ${controlsHtml}
@@ -1452,11 +1489,8 @@ function renderDynamicBlocks(blocks, isEditMode) {
   });
 }
 
-function addBlock(type, templateId = 'two-col-text') {
-  pushUndoSnapshot();
-  editorState.blocks = editorState.blocks || [];
+function createBlockObject(type, templateId = 'two-col-text') {
   const id = `blk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
   const templates = {
     'big-showcase': {
       id,
@@ -1515,10 +1549,99 @@ function addBlock(type, templateId = 'two-col-text') {
     chart: { id, type: 'chart', title: 'Quarterly Index', chartType: 'bar', labels: ['Q1', 'Q2', 'Q3', 'Q4'], values: [28, 36, 42, 54] }
   };
 
-  editorState.blocks.push(templates[type] || templates['text-node']);
+  return templates[type] || templates['text-node'];
+}
+
+function addBlock(type, templateId = 'two-col-text', insertAtIndex = null) {
+  pushUndoSnapshot();
+  editorState.blocks = editorState.blocks || [];
+  const newBlock = createBlockObject(type, templateId);
+
+  if (typeof insertAtIndex === 'number' && insertAtIndex >= 0 && insertAtIndex <= editorState.blocks.length) {
+    editorState.blocks.splice(insertAtIndex, 0, newBlock);
+  } else {
+    editorState.blocks.push(newBlock);
+  }
+
   renderDynamicBlocks(editorState.blocks, true);
   bindEditableTargets();
   scheduleAutoSave();
+}
+
+function bindCanvasDropTargets() {
+  const dropZones = Array.from(
+    document.querySelectorAll('#dynamic-blocks-container, main.content-wrapper')
+  ).filter((el) => !isStudioUiNode(el));
+
+  dropZones.forEach((zone) => {
+    zone.addEventListener('dragover', (e) => {
+      if (!draggedCatalogItem) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      zone.classList.add('studio-drop-active');
+    });
+
+    zone.addEventListener('dragleave', (e) => {
+      if (!zone.contains(e.relatedTarget)) {
+        zone.classList.remove('studio-drop-active');
+      }
+    });
+
+    zone.addEventListener('drop', (e) => {
+      if (!draggedCatalogItem) return;
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('studio-drop-active');
+      document.querySelectorAll('.studio-drop-active').forEach((n) => n.classList.remove('studio-drop-active'));
+
+      const blocks = editorState.blocks || [];
+      let insertIndex = blocks.length;
+      const targetBlockEl = e.target.closest?.('.dynamic-block[data-block-id]');
+      if (targetBlockEl) {
+        const foundIdx = blocks.findIndex((b) => b.id === targetBlockEl.dataset.blockId);
+        if (foundIdx >= 0) {
+          const rect = targetBlockEl.getBoundingClientRect();
+          insertIndex = e.clientY > rect.top + rect.height / 2 ? foundIdx + 1 : foundIdx;
+        }
+      }
+
+      const item = draggedCatalogItem;
+      draggedCatalogItem = null;
+      addBlock(item.type, item.templateId, insertIndex);
+    });
+  });
+}
+
+function bindCatalogDragSources(drawer) {
+  drawer.querySelectorAll('[data-add-widget]').forEach((card) => {
+    card.setAttribute('draggable', 'true');
+    card.addEventListener('dragstart', (e) => {
+      const type = card.dataset.addWidget;
+      draggedCatalogItem = { type, templateId: 'two-col-text' };
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', JSON.stringify(draggedCatalogItem));
+    });
+    card.addEventListener('dragend', () => {
+      draggedCatalogItem = null;
+      document.querySelectorAll('.studio-drop-active').forEach((n) => n.classList.remove('studio-drop-active'));
+    });
+    card.addEventListener('click', () => addBlock(card.dataset.addWidget));
+  });
+
+  drawer.querySelectorAll('[data-add-template]').forEach((card) => {
+    card.setAttribute('draggable', 'true');
+    card.addEventListener('dragstart', (e) => {
+      const templateId = card.dataset.addTemplate;
+      draggedCatalogItem = { type: 'template', templateId };
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/plain', JSON.stringify(draggedCatalogItem));
+    });
+    card.addEventListener('dragend', () => {
+      draggedCatalogItem = null;
+      document.querySelectorAll('.studio-drop-active').forEach((n) => n.classList.remove('studio-drop-active'));
+    });
+    card.addEventListener('click', () => addBlock('template', card.dataset.addTemplate));
+  });
 }
 
 async function saveToSupabase(statusLabel = 'Saved') {
@@ -1766,16 +1889,16 @@ function renderDrawerContent() {
 
     drawer.innerHTML = `
       <div class="studio-drawer-header">
-        <span class="studio-active-page-ext">Blocks &amp; Previews</span>
+        <span class="studio-active-page-ext">Drag or Click Blocks</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         ${items
           .map(
             (it) => `
-          <button type="button" class="studio-widget-card" data-add-widget="${it.type}">
+          <button type="button" class="studio-widget-card" data-add-widget="${it.type}" title="Drag onto page or click to add">
             <div class="studio-widget-head">
               <span>${it.label}</span>
-              <span style="font-size:10px;color:#2563EB;">+ Add</span>
+              <span style="font-size:10px;color:#2563EB;">DRAG / +</span>
             </div>
             <div class="studio-widget-preview">${renderWidgetPreviewHtml(it.type)}</div>
           </button>
@@ -1785,9 +1908,7 @@ function renderDrawerContent() {
       </div>
     `;
 
-    drawer.querySelectorAll('[data-add-widget]').forEach((btn) => {
-      btn.addEventListener('click', () => addBlock(btn.dataset.addWidget));
-    });
+    bindCatalogDragSources(drawer);
   } else if (activeDrawerTab === 'templates') {
     const templateOptions = [
       { id: 'split-photo', label: 'Split + Image Slot', hasImg: true },
@@ -1802,16 +1923,16 @@ function renderDrawerContent() {
 
     drawer.innerHTML = `
       <div class="studio-drawer-header">
-        <span class="studio-active-page-ext">Templates (8)</span>
+        <span class="studio-active-page-ext">Drag or Click Layouts</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${templateOptions
           .map(
             (t) => `
-          <button type="button" class="studio-widget-card" data-add-template="${t.id}">
+          <button type="button" class="studio-widget-card" data-add-template="${t.id}" title="Drag onto page or click to add">
             <div class="studio-widget-head">
               <span>${t.label}</span>
-              <span style="font-size:10px;color:#2563EB;">${t.hasImg ? 'IMG' : 'TXT'}</span>
+              <span style="font-size:10px;color:#2563EB;">${t.hasImg ? 'DRAG IMG' : 'DRAG TXT'}</span>
             </div>
             <div class="studio-widget-preview">${renderWidgetPreviewHtml(t.hasImg ? 'image' : 'text-node')}</div>
           </button>
@@ -1821,9 +1942,7 @@ function renderDrawerContent() {
       </div>
     `;
 
-    drawer.querySelectorAll('[data-add-template]').forEach((btn) => {
-      btn.addEventListener('click', () => addBlock('template', btn.dataset.addTemplate));
-    });
+    bindCatalogDragSources(drawer);
   } else if (activeDrawerTab === 'effects') {
     const curStyle = (activeStyleKey && editorState.textStyles?.[activeStyleKey]) || {};
     drawer.innerHTML = `
@@ -2175,7 +2294,7 @@ async function initCanvaStudio() {
     <div style="display:flex;align-items:center;gap:6px;">
       <button type="button" data-device-mode="desktop" class="studio-card-btn is-active" title="Desktop preview">Desktop</button>
       <button type="button" data-device-mode="tablet" class="studio-card-btn" title="Tablet (768px) preview">Tablet</button>
-      <button type="button" data-device-mode="mobile" class="studio-card-btn" title="Mobile (390px) preview">Mobile</button>
+      <button type="button" data-device-mode="mobile" class="studio-card-btn" title="Mobile / Phone (390px) preview">Phone</button>
       <button type="button" id="studio-undo-btn" class="studio-card-btn" title="Undo">Undo</button>
       <button type="button" id="studio-redo-btn" class="studio-card-btn" title="Redo">Redo</button>
       <button type="button" id="studio-publish-btn" class="btn btn-primary" style="padding:6px 14px;font-size:12px;">Publish</button>
@@ -2186,7 +2305,7 @@ async function initCanvaStudio() {
   const formatBar = document.createElement('div');
   formatBar.id = 'studio-format-bar';
   formatBar.innerHTML = `
-    <select id="fmt-font-family" title="Font family">
+    <select id="fmt-font-family" title="Current & available font family">
       <option value="">Default Font</option>
       <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
       <option value="'Poppins', sans-serif">Poppins</option>
@@ -2240,6 +2359,7 @@ async function initCanvaStudio() {
 
   document.body.append(topBar, formatBar, leftRail, sideDrawer);
   initMeasureRulerAndMagnet();
+  bindCanvasDropTargets();
 
   topBar.querySelectorAll('[data-device-mode]').forEach((btn) => {
     btn.addEventListener('click', () => setDevicePreviewMode(btn.dataset.deviceMode));
