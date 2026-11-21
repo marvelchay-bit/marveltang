@@ -85,7 +85,9 @@ let isApplyingHistory = false;
 let activeEditableEl = null;
 let activeStyleKey = null;
 let activeBoxEl = null;
+let activeImageSlotContext = null;
 let activeDrawerTab = 'pages';
+let activeDeviceMode = 'desktop';
 let studioInitialized = false;
 let magnetEnabled = true;
 let isDraggingGuide = false;
@@ -109,8 +111,10 @@ function isStudioUiNode(el) {
       el.closest('#studio-spatial-badge') ||
       el.closest('#studio-left-rail') ||
       el.closest('#studio-side-drawer') ||
+      el.closest('#studio-slot-popover') ||
       el.classList.contains('studio-box-dot') ||
-      el.classList.contains('studio-drag-pill')
+      el.classList.contains('studio-drag-pill') ||
+      el.classList.contains('studio-block-badge')
   );
 }
 
@@ -384,7 +388,7 @@ function reapplyAllElementStyles() {
 }
 
 function clearBoxHandles() {
-  document.querySelectorAll('.studio-box-dot, .studio-drag-pill').forEach((node) => node.remove());
+  document.querySelectorAll('.studio-box-dot, .studio-drag-pill, .studio-block-badge').forEach((node) => node.remove());
   if (activeBoxEl) {
     activeBoxEl.classList.remove('studio-selected-outline');
   }
@@ -408,6 +412,11 @@ function attachSixDotsAndMovePill(boxEl, boxKey) {
   clearBoxHandles();
   activeBoxEl = boxEl;
   boxEl.classList.add('studio-selected-outline');
+
+  const kindBadge = document.createElement('span');
+  kindBadge.className = 'studio-block-badge';
+  kindBadge.textContent = boxEl.dataset.blockKind || 'BOX';
+  boxEl.appendChild(kindBadge);
 
   const movePill = document.createElement('span');
   movePill.className = 'studio-drag-pill';
@@ -456,69 +465,174 @@ function attachSixDotsAndMovePill(boxEl, boxKey) {
   });
 }
 
-function updateSpatialGuidesForBox(boxEl) {
+/* Horizontal Height & Gap Measurement Lines When Dragging/Resizing Boxes */
+function updateHeightMeasurementLines(boxEl) {
   const overlay = document.getElementById('studio-spatial-overlay');
   const badge = document.getElementById('studio-spatial-badge');
   if (!overlay || !badge || !boxEl) return;
 
   overlay.innerHTML = '';
   const r = boxEl.getBoundingClientRect();
-  const contentEl = document.querySelector('.content-wrapper');
-  const cRect = contentEl ? contentEl.getBoundingClientRect() : { left: 0, right: window.innerWidth, width: window.innerWidth };
-  const centerX = cRect.left + cRect.width / 2;
-  const boxCenterX = r.left + r.width / 2;
+  const boxHeight = Math.round(r.height);
+  const boxWidth = Math.round(r.width);
 
-  const centerLine = document.createElement('div');
-  centerLine.className = 'studio-guide-v studio-guide-center';
-  centerLine.style.left = `${centerX}px`;
-  overlay.appendChild(centerLine);
+  const topLine = document.createElement('div');
+  topLine.className = 'studio-height-line';
+  topLine.style.top = `${r.top}px`;
 
-  const leftMargin = document.createElement('div');
-  leftMargin.className = 'studio-guide-v studio-guide-margin';
-  leftMargin.style.left = `${cRect.left + 56}px`;
+  const topTag = document.createElement('span');
+  topTag.className = 'studio-height-tag';
+  topTag.style.top = `${r.top}px`;
+  topTag.textContent = `TOP · H: ${boxHeight}px`;
 
-  const rightMargin = document.createElement('div');
-  rightMargin.className = 'studio-guide-v studio-guide-margin';
-  rightMargin.style.left = `${cRect.right - 56}px`;
-  overlay.append(leftMargin, rightMargin);
+  const bottomLine = document.createElement('div');
+  bottomLine.className = 'studio-height-line';
+  bottomLine.style.top = `${r.bottom}px`;
+
+  const bottomTag = document.createElement('span');
+  bottomTag.className = 'studio-height-tag';
+  bottomTag.style.top = `${r.bottom}px`;
+  bottomTag.textContent = `BOTTOM · W: ${boxWidth}px`;
+
+  overlay.append(topLine, topTag, bottomLine, bottomTag);
 
   const neighbors = Array.from(
-    document.querySelectorAll('.content-wrapper .featured-card, .content-wrapper .hero-banner, .content-wrapper section')
+    document.querySelectorAll('.content-wrapper .featured-card, .content-wrapper .full-image-hero-frame, .content-wrapper .dynamic-block')
   ).filter((el) => el !== boxEl && !el.contains(boxEl) && !boxEl.contains(el) && !isStudioUiNode(el));
 
-  let nearestGap = null;
+  let aboveGap = null;
+  let belowGap = null;
+
   for (const nb of neighbors) {
     const nr = nb.getBoundingClientRect();
     if (nr.width <= 0 || nr.height <= 0) continue;
-    const alignedEdge = Math.abs(nr.left - r.left) < 12 || Math.abs(nr.right - r.right) < 12;
-    const vGap = nr.top >= r.bottom ? nr.top - r.bottom : r.top >= nr.bottom ? r.top - nr.bottom : null;
 
-    if (alignedEdge) {
+    if (nr.bottom <= r.top) {
+      const gap = Math.round(r.top - nr.bottom);
+      if (gap < 280 && (aboveGap === null || gap < aboveGap)) aboveGap = gap;
       const edgeLine = document.createElement('div');
-      edgeLine.className = 'studio-guide-v studio-guide-neighbor';
-      edgeLine.style.left = `${nr.left}px`;
-      overlay.appendChild(edgeLine);
+      edgeLine.className = 'studio-height-line neighbor-edge';
+      edgeLine.style.top = `${nr.bottom}px`;
+      const edgeTag = document.createElement('span');
+      edgeTag.className = 'studio-height-tag neighbor-tag';
+      edgeTag.style.top = `${nr.bottom}px`;
+      edgeTag.textContent = `ABOVE EDGE · GAP ${gap}px`;
+      overlay.append(edgeLine, edgeTag);
     }
 
-    if (vGap !== null && vGap < 240 && (nearestGap === null || vGap < nearestGap)) {
-      nearestGap = Math.round(vGap);
-      const hLine = document.createElement('div');
-      hLine.className = 'studio-guide-h studio-guide-neighbor';
-      hLine.style.top = `${nr.top >= r.bottom ? nr.top : nr.bottom}px`;
-      overlay.appendChild(hLine);
+    if (nr.top >= r.bottom) {
+      const gap = Math.round(nr.top - r.bottom);
+      if (gap < 280 && (belowGap === null || gap < belowGap)) belowGap = gap;
+      const edgeLine = document.createElement('div');
+      edgeLine.className = 'studio-height-line neighbor-edge';
+      edgeLine.style.top = `${nr.top}px`;
+      const edgeTag = document.createElement('span');
+      edgeTag.className = 'studio-height-tag neighbor-tag';
+      edgeTag.style.top = `${nr.top}px`;
+      edgeTag.textContent = `BELOW EDGE · GAP ${gap}px`;
+      overlay.append(edgeLine, edgeTag);
     }
   }
 
   overlay.classList.add('active');
-  const offsetFromCenter = Math.round(boxCenterX - centerX);
-  const gapText = nearestGap !== null ? ` · Gap: ${nearestGap}px` : '';
-  badge.textContent = `Center Δ: ${offsetFromCenter}px · W: ${Math.round(r.width)}px · H: ${Math.round(r.height)}px${gapText}`;
+  const parts = [`H: ${boxHeight}px`, `W: ${boxWidth}px`];
+  if (aboveGap !== null) parts.push(`Top Gap: ${aboveGap}px`);
+  if (belowGap !== null) parts.push(`Bottom Gap: ${belowGap}px`);
+  badge.textContent = parts.join(' · ');
   badge.classList.add('active');
 }
 
 function hideSpatialGuides() {
   document.getElementById('studio-spatial-overlay')?.classList.remove('active');
   document.getElementById('studio-spatial-badge')?.classList.remove('active');
+}
+
+function openImageSlotPopover(slotInfo) {
+  activeImageSlotContext = slotInfo;
+  const pop = document.getElementById('studio-slot-popover');
+  if (!pop) return;
+
+  const recentUploadsHtml = (editorState.uploads || [])
+    .slice(0, 6)
+    .map(
+      (u) => `
+      <button type="button" class="studio-mini-action" data-pick-upload-url="${u.url}" style="max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        Use: ${u.name}
+      </button>
+    `
+    )
+    .join('');
+
+  pop.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <strong style="font-size:12px;">IMAGE SLOT // ${slotInfo.label || 'SELECT PHOTO'}</strong>
+      <button type="button" id="studio-slot-close" class="studio-mini-action">✕</button>
+    </div>
+    <label class="studio-card-btn" style="display:block;text-align:center;margin-bottom:8px;">
+      Upload Photo File
+      <input type="file" id="studio-slot-file-input" accept="image/*" style="display:none;">
+    </label>
+    <div style="display:flex;gap:6px;margin-bottom:8px;">
+      <input type="text" id="studio-slot-url-input" value="${slotInfo.currentUrl || ''}" placeholder="Paste image URL (https://...)" style="flex:1;padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;font-size:11.5px;">
+      <button type="button" id="studio-slot-url-apply" class="studio-card-btn is-active">Apply</button>
+    </div>
+    ${
+      recentUploadsHtml
+        ? `<div style="display:flex;flex-wrap:wrap;gap:5px;padding-top:6px;border-top:1px solid #E5E7EB;">${recentUploadsHtml}</div>`
+        : ''
+    }
+  `;
+  pop.classList.add('open');
+
+  const applyUrlToSlot = (urlVal) => {
+    const clean = (urlVal || '').trim();
+    if (!clean || !activeImageSlotContext) return;
+    pushUndoSnapshot();
+    const ctx = activeImageSlotContext;
+
+    if (ctx.kind === 'editImg') {
+      editorState.images = editorState.images || {};
+      editorState.images[ctx.key] = clean;
+      if (ctx.imgEl) ctx.imgEl.src = clean;
+    } else if (ctx.kind === 'blockField') {
+      const blk = (editorState.blocks || []).find((b) => b.id === ctx.blockId);
+      if (blk) {
+        if (ctx.field === 'slideImg' && blk.slides?.[ctx.slideIdx]) {
+          blk.slides[ctx.slideIdx].imageUrl = clean;
+        } else if (ctx.field === 'cardImg' && blk.cards?.[ctx.cardIdx]) {
+          blk.cards[ctx.cardIdx].imageUrl = clean;
+        } else {
+          blk[ctx.field] = clean;
+        }
+        renderDynamicBlocks(editorState.blocks, true);
+        bindEditableTargets();
+      }
+    }
+    scheduleAutoSave();
+  };
+
+  pop.querySelector('#studio-slot-close')?.addEventListener('click', () => pop.classList.remove('open'));
+  pop.querySelector('#studio-slot-url-apply')?.addEventListener('click', () => {
+    applyUrlToSlot(pop.querySelector('#studio-slot-url-input')?.value || '');
+  });
+  pop.querySelector('#studio-slot-file-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const uploadedUrl = await uploadFileToSupabase(file);
+    if (uploadedUrl) {
+      const inp = pop.querySelector('#studio-slot-url-input');
+      if (inp) inp.value = uploadedUrl;
+      applyUrlToSlot(uploadedUrl);
+    }
+  });
+  pop.querySelectorAll('[data-pick-upload-url]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const u = btn.dataset.pickUploadUrl;
+      const inp = pop.querySelector('#studio-slot-url-input');
+      if (inp) inp.value = u;
+      applyUrlToSlot(u);
+    });
+  });
 }
 
 function selectEditableElement(el, styleKey) {
@@ -532,12 +646,12 @@ function selectEditableElement(el, styleKey) {
     syncFormatBarToElement(el, styleKey);
   }
 
-  const boxCandidate = el?.closest('.featured-card, .hero-banner, .dynamic-block') || null;
+  const boxCandidate = el?.closest('.featured-card, .full-image-hero-frame, .dynamic-block') || null;
   if (boxCandidate && !isStudioUiNode(boxCandidate)) {
     const boxKey = boxCandidate.dataset.boxKey || `box:${boxCandidate.dataset.blockId || styleKey}`;
     boxCandidate.dataset.boxKey = boxKey;
     attachSixDotsAndMovePill(boxCandidate, boxKey);
-    updateSpatialGuidesForBox(boxCandidate);
+    updateHeightMeasurementLines(boxCandidate);
   }
 }
 
@@ -581,7 +695,7 @@ async function applyEffectToCurrentPage(effectVal, animationVal) {
   pushUndoSnapshot();
   editorState.textStyles = editorState.textStyles || {};
   const targets = Array.from(
-    document.querySelectorAll('[data-edit-text], .featured-card, .hero-banner, [data-block-field]')
+    document.querySelectorAll('[data-edit-text], .featured-card, .full-image-hero-frame, [data-block-field]')
   ).filter((el) => !isStudioUiNode(el));
 
   targets.forEach((el, idx) => {
@@ -650,6 +764,40 @@ function moveBlockById(id, mode) {
   scheduleAutoSave();
 }
 
+function bindImageSlotClicks() {
+  document.querySelectorAll('[data-edit-img]').forEach((imgEl) => {
+    if (isStudioUiNode(imgEl)) return;
+    imgEl.style.cursor = 'pointer';
+    imgEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openImageSlotPopover({
+        kind: 'editImg',
+        key: imgEl.dataset.editImg,
+        imgEl,
+        currentUrl: imgEl.getAttribute('src') || '',
+        label: imgEl.dataset.editImg
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-image-slot-trigger]').forEach((triggerEl) => {
+    if (isStudioUiNode(triggerEl)) return;
+    triggerEl.style.cursor = 'pointer';
+    triggerEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openImageSlotPopover({
+        kind: 'blockField',
+        blockId: triggerEl.dataset.blockId,
+        field: triggerEl.dataset.field,
+        cardIdx: Number(triggerEl.dataset.cardIdx || 0),
+        slideIdx: Number(triggerEl.dataset.slideIdx || 0),
+        currentUrl: triggerEl.dataset.currentUrl || '',
+        label: triggerEl.dataset.slotLabel || 'IMAGE SLOT'
+      });
+    });
+  });
+}
+
 function bindEditableTargets() {
   document.querySelectorAll('[data-edit-text]').forEach((el) => {
     if (isStudioUiNode(el)) return;
@@ -670,7 +818,7 @@ function bindEditableTargets() {
     });
   });
 
-  document.querySelectorAll('.featured-card, .hero-banner').forEach((cardEl, i) => {
+  document.querySelectorAll('.featured-card, .full-image-hero-frame').forEach((cardEl, i) => {
     if (isStudioUiNode(cardEl)) return;
     const bKey = cardEl.dataset.boxKey || `card-box-${i}`;
     cardEl.dataset.boxKey = bKey;
@@ -679,9 +827,9 @@ function bindEditableTargets() {
     }
     cardEl.addEventListener('mousedown', (e) => {
       if (isStudioUiNode(e.target)) return;
-      if (e.target.closest('[contenteditable="true"], a, button, input, select, textarea')) return;
+      if (e.target.closest('[contenteditable="true"], [data-edit-img], [data-image-slot-trigger], a, button, input, select, textarea')) return;
       attachSixDotsAndMovePill(cardEl, bKey);
-      updateSpatialGuidesForBox(cardEl);
+      updateHeightMeasurementLines(cardEl);
       beginBoxMoveSession(cardEl, bKey, e.clientX, e.clientY);
     });
   });
@@ -698,6 +846,8 @@ function bindEditableTargets() {
       scheduleAutoSave();
     });
   });
+
+  bindImageSlotClicks();
 
   document.querySelectorAll('[data-remove-block]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -776,20 +926,6 @@ function bindEditableTargets() {
     });
   });
 
-  document.querySelectorAll('[data-slide-img]').forEach((input) => {
-    input.addEventListener('change', () => {
-      const [blockId, idxStr] = input.dataset.slideImg.split('::');
-      const block = (editorState.blocks || []).find((b) => b.id === blockId);
-      const sIdx = Number(idxStr);
-      if (!block || !block.slides || !block.slides[sIdx]) return;
-      pushUndoSnapshot();
-      block.slides[sIdx].imageUrl = input.value.trim();
-      renderDynamicBlocks(editorState.blocks, true);
-      bindEditableTargets();
-      scheduleAutoSave();
-    });
-  });
-
   document.querySelectorAll('[data-add-slide]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const block = (editorState.blocks || []).find((b) => b.id === btn.dataset.addSlide);
@@ -801,26 +937,6 @@ function bindEditableTargets() {
         caption: `Slide ${block.slides.length + 1} — Research & field note`
       });
       block.activeIndex = block.slides.length - 1;
-      renderDynamicBlocks(editorState.blocks, true);
-      bindEditableTargets();
-      scheduleAutoSave();
-    });
-  });
-
-  document.querySelectorAll('[data-tpl-img]').forEach((input) => {
-    input.addEventListener('change', () => {
-      const [blockId, fieldName] = input.dataset.tplImg.split('::');
-      const block = (editorState.blocks || []).find((b) => b.id === blockId);
-      if (!block) return;
-      pushUndoSnapshot();
-      if (fieldName.startsWith('cardImg_')) {
-        const cIdx = Number(fieldName.replace('cardImg_', ''));
-        if (block.cards && block.cards[cIdx]) {
-          block.cards[cIdx].imageUrl = input.value.trim();
-        }
-      } else {
-        block[fieldName] = input.value.trim();
-      }
       renderDynamicBlocks(editorState.blocks, true);
       bindEditableTargets();
       scheduleAutoSave();
@@ -852,14 +968,6 @@ function bindCarouselControls(wrapper, block, isEditMode) {
   wrapper.querySelectorAll('[data-carousel-dot]').forEach((dot) => {
     dot.addEventListener('click', () => showSlide(Number(dot.dataset.carouselDot)));
   });
-
-  if (isEditMode) {
-    const activeUrlInput = wrapper.querySelector('[data-active-slide-url]');
-    if (activeUrlInput) {
-      activeUrlInput.value = slides[idx]?.imageUrl || '';
-      activeUrlInput.dataset.slideImg = `${block.id}::${idx}`;
-    }
-  }
 }
 
 function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
@@ -867,18 +975,26 @@ function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
   const hKey = `${styleKeyPrefix}:heading`;
   const bKey = `${styleKeyPrefix}:body`;
 
+  const slotBox = (url, field, cardIdx = 0, label = 'IMAGE SLOT') => {
+    if (url) {
+      return `<img src="${url}" alt="${label}" class="tpl-img-slot" ${
+        isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="${field}" data-card-idx="${cardIdx}" data-current-url="${url}" data-slot-label="${label}"` : ''
+      }>`;
+    }
+    return `<div class="empty-img-slot" ${
+      isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="${field}" data-card-idx="${cardIdx}" data-current-url="" data-slot-label="${label}"` : ''
+    }><span class="mono">${label}</span><span style="font-size:11px;color:#475569;">${isEditMode ? 'Click to upload or paste URL' : ''}</span></div>`;
+  };
+
   if (tpl === 'split-photo') {
     return `
       <span class="mono">TEMPLATE // SPLIT + IMAGE SLOT</span>
       <div class="tpl-grid-2" style="align-items:center;">
         <div>
           <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}">${block.heading || 'Editorial Feature With Visual'}</h3>
-          <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}">${block.body || 'Pair concise strategic framing with a dedicated image slot.'}</p>
-          ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Image URL" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+          <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Pair concise strategic framing with a dedicated image slot.'}</p>
         </div>
-        <div>
-          ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Feature'}" class="tpl-img-slot" style="height:260px;">` : `<div class="tpl-img-slot" style="height:260px;display:flex;align-items:center;justify-content:center;"><span class="mono">IMAGE SLOT</span></div>`}
-        </div>
+        <div>${slotBox(block.imageUrl, 'imageUrl', 0, 'SPLIT IMAGE SLOT')}</div>
       </div>
     `;
   }
@@ -886,8 +1002,7 @@ function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
   if (tpl === 'hero-feature') {
     return `
       <span class="mono">TEMPLATE // HERO FEATURE + IMAGE SLOT</span>
-      ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Hero'}" class="tpl-img-slot" style="height:280px;margin:14px 0 18px 0;">` : `<div class="tpl-img-slot" style="height:240px;margin:14px 0 18px 0;display:flex;align-items:center;justify-content:center;"><span class="mono">HERO IMAGE SLOT</span></div>`}
-      ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Hero image URL" style="width:100%;padding:6px;margin-bottom:12px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+      <div style="margin:14px 0 18px 0;">${slotBox(block.imageUrl, 'imageUrl', 0, 'HERO IMAGE SLOT')}</div>
       <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}">${block.heading || 'Flagship Case or Essay Title'}</h3>
       <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Lead statement highlighting the core market question and outcome.'}</p>
     `;
@@ -907,8 +1022,7 @@ function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
           .map(
             (c, i) => `
           <div>
-            ${c.imageUrl ? `<img src="${c.imageUrl}" alt="${c.title}" class="tpl-img-slot" style="height:170px;margin-bottom:10px;">` : `<div class="tpl-img-slot" style="height:170px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;"><span class="mono">SLOT ${i + 1}</span></div>`}
-            ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::cardImg_${i}" value="${c.imageUrl || ''}" placeholder="Image URL ${i + 1}" style="width:100%;padding:5px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);font-size:11px;">` : ''}
+            <div style="margin-bottom:10px;">${slotBox(c.imageUrl, 'cardImg', i, `SLOT ${i + 1}`)}</div>
             <h4 contenteditable="${isEditMode}" data-block-field="cards.${i}.title" style="font-size:1rem;margin-bottom:6px;">${c.title}</h4>
             <p contenteditable="${isEditMode}" data-block-field="cards.${i}.body" style="font-size:0.88rem;margin-bottom:0;">${c.body}</p>
           </div>
@@ -928,10 +1042,7 @@ function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
           <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Brand & Strategy Sprint'}</h3>
           <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Context, diagnostic insight, execution plan, and measurable result.'}</p>
         </div>
-        <div>
-          ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Case'}" class="tpl-img-slot" style="height:220px;">` : `<div class="tpl-img-slot" style="height:220px;display:flex;align-items:center;justify-content:center;"><span class="mono">CASE VISUAL SLOT</span></div>`}
-          ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Case image URL" style="width:100%;padding:6px;margin-top:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
-        </div>
+        <div>${slotBox(block.imageUrl, 'imageUrl', 0, 'CASE VISUAL SLOT')}</div>
       </div>
     `;
   }
@@ -1014,6 +1125,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
     const wrapper = document.createElement('section');
     wrapper.className = 'section-block dynamic-block';
     wrapper.dataset.blockId = block.id;
+    wrapper.dataset.blockKind = (block.type || 'BLOCK').toUpperCase();
     const boxKey = `box:${block.id}`;
     wrapper.dataset.boxKey = boxKey;
 
@@ -1030,19 +1142,20 @@ function renderDynamicBlocks(blocks, isEditMode) {
 
     if (block.type === 'big-showcase') {
       const sKey = `${styleKeyPrefix}:headline`;
-      const imgUrl = block.imageUrl || 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=85';
+      const imgUrl = block.imageUrl || 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1400&q=85';
       wrapper.innerHTML = `
         ${controlsHtml}
         <div class="featured-card">
           <div class="big-showcase-grid">
             <div>
-              <span class="mono" contenteditable="${isEditMode}" data-block-field="kicker">${block.kicker || 'VISUAL SHOWCASE'}</span>
+              <span class="mono" contenteditable="${isEditMode}" data-block-field="kicker">${block.kicker || 'BIG SHOWCASE'}</span>
               <h2 class="big-showcase-display" contenteditable="${isEditMode}" data-block-field="headline" data-style-key="${sKey}">${block.headline || 'BRANDS BUILT TO BE TRUSTED.'}</h2>
-              <p contenteditable="${isEditMode}" data-block-field="body" style="margin-top:16px;margin-bottom:0;">${block.body || 'Big editorial statement paired with a high-impact visual frame.'}</p>
+              <p contenteditable="${isEditMode}" data-block-field="body" style="margin-top:16px;margin-bottom:0;">${block.body || 'Large visual frame paired with bold editorial copy.'}</p>
             </div>
             <div>
-              <img src="${imgUrl}" alt="${block.headline || 'Showcase'}" class="big-showcase-img">
-              ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Showcase image URL" style="width:100%;padding:6px;margin-top:10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+              <img src="${imgUrl}" alt="${block.headline || 'Showcase'}" class="big-showcase-img" ${
+                isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="imageUrl" data-current-url="${imgUrl}" data-slot-label="BIG SHOWCASE IMAGE"` : ''
+              }>
             </div>
           </div>
         </div>
@@ -1107,17 +1220,14 @@ function renderDynamicBlocks(blocks, isEditMode) {
             ${isEditMode ? `<button type="button" data-add-slide="${block.id}" class="studio-card-btn">+ Add Slide</button>` : ''}
           </div>
           <h3 contenteditable="${isEditMode}" data-block-field="title">${block.title || 'Visual Carousel'}</h3>
-          ${
-            isEditMode
-              ? `<div style="margin-bottom:10px;"><input type="text" data-active-slide-url="${block.id}" value="" placeholder="Active slide image URL" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);font-size:12px;"></div>`
-              : ''
-          }
           <div class="carousel-stage">
             ${slides
               .map(
                 (sl, sIdx) => `
               <div class="carousel-slide ${sIdx === (block.activeIndex || 0) ? 'active' : ''}">
-                <img src="${sl.imageUrl}" alt="${sl.caption || `Slide ${sIdx + 1}`}">
+                <img src="${sl.imageUrl}" alt="${sl.caption || `Slide ${sIdx + 1}`}" ${
+                  isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="slideImg" data-slide-idx="${sIdx}" data-current-url="${sl.imageUrl || ''}" data-slot-label="SLIDE ${sIdx + 1} IMAGE"` : ''
+                }>
                 <div class="carousel-caption-bar">
                   <p contenteditable="${isEditMode}" data-block-field="slides.${sIdx}.caption" style="margin:0;font-size:0.92rem;">${sl.caption || ''}</p>
                   <span class="mono">${sIdx + 1} / ${slides.length}</span>
@@ -1261,7 +1371,17 @@ function renderDynamicBlocks(blocks, isEditMode) {
         ${controlsHtml}
         <div class="featured-card">
           <span class="mono">VISUAL</span>
-          ${block.url ? `<img src="${block.url}" alt="${block.caption || 'Visual'}" style="width:100%;max-height:480px;object-fit:cover;border-radius:8px;margin:14px 0;">` : `<p class="mono" style="margin:12px 0;">Upload or link an image in Studio mode.</p>`}
+          <div style="margin:14px 0;">
+            ${
+              block.url
+                ? `<img src="${block.url}" alt="${block.caption || 'Visual'}" style="width:100%;max-height:480px;object-fit:cover;border-radius:8px;" ${
+                    isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="url" data-current-url="${block.url}" data-slot-label="IMAGE CARD PHOTO"` : ''
+                  }>`
+                : `<div class="empty-img-slot" ${
+                    isEditMode ? `data-image-slot-trigger="1" data-block-id="${block.id}" data-field="url" data-current-url="" data-slot-label="IMAGE CARD SLOT"` : ''
+                  }><span class="mono">IMAGE SLOT</span><span style="font-size:11px;color:#475569;">${isEditMode ? 'Click to upload or paste URL' : ''}</span></div>`
+            }
+          </div>
           <p contenteditable="${isEditMode}" data-block-field="caption" data-style-key="${iKey}" style="margin:0;">${block.caption || 'Add a bold caption...'}</p>
         </div>
       `;
@@ -1344,7 +1464,7 @@ function addBlock(type, templateId = 'two-col-text') {
       kicker: 'BIG SHOWCASE',
       headline: 'BRANDS BUILT TO BE TRUSTED.',
       body: 'Large visual frame paired with bold editorial copy.',
-      imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=85'
+      imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1400&q=85'
     },
     'text-node': { id, type: 'text-node', tag: 'p', content: 'New editorial paragraph — click to edit.' },
     info: { id, type: 'info', tag: 'INFO // NOTE', title: 'Information Block', infoBody: 'Add detailed context, notes, or references.' },
@@ -1729,7 +1849,6 @@ function renderDrawerContent() {
             <option value="pulse" ${curStyle.animation === 'pulse' ? 'selected' : ''}>Pulse</option>
             <option value="float" ${curStyle.animation === 'float' ? 'selected' : ''}>Float</option>
             <option value="shake" ${curStyle.animation === 'shake' ? 'selected' : ''}>Shake Loop</option>
-            <option value="type" ${curStyle.animation === 'type' ? 'selected' : ''}>Typewriter</option>
           </select>
         </label>
         <div style="display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px solid var(--studio-border);">
@@ -1763,7 +1882,7 @@ function renderDrawerContent() {
           <img src="${u.url}" alt="${u.name}" style="width:100%;height:96px;object-fit:cover;border-radius:6px;margin-bottom:6px;">
           <div style="display:flex;gap:6px;">
             <button type="button" class="studio-mini-action" data-insert-img="${u.url}">Insert Card</button>
-            <button type="button" class="studio-mini-action" data-set-banner="${u.url}">Set Hero Banner</button>
+            <button type="button" class="studio-mini-action" data-set-full-img="${u.url}">Set Full Image</button>
           </div>
         </div>
       `
@@ -1804,16 +1923,14 @@ function renderDrawerContent() {
       });
     });
 
-    drawer.querySelectorAll('[data-set-banner]').forEach((btn) => {
+    drawer.querySelectorAll('[data-set-full-img]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const banner = document.querySelector('[data-edit-bg="hero-banner"]');
-        const url = btn.dataset.setBanner;
+        const imgEl = document.querySelector('[data-edit-img="main-full-image"]');
+        const url = btn.dataset.setFullImg;
         pushUndoSnapshot();
-        editorState.backgrounds = editorState.backgrounds || {};
-        editorState.backgrounds['hero-banner'] = url;
-        if (banner) {
-          banner.style.backgroundImage = `linear-gradient(to top, rgba(12, 15, 20, 0.74), rgba(12, 15, 20, 0.18)), url('${url}')`;
-        }
+        editorState.images = editorState.images || {};
+        editorState.images['main-full-image'] = url;
+        if (imgEl) imgEl.src = url;
         scheduleAutoSave();
       });
     });
@@ -1890,6 +2007,15 @@ function renderDrawerContent() {
   }
 }
 
+function setDevicePreviewMode(mode) {
+  activeDeviceMode = mode;
+  document.body.classList.remove('studio-device-desktop', 'studio-device-tablet', 'studio-device-mobile');
+  document.body.classList.add(`studio-device-${mode}`);
+  document.querySelectorAll('[data-device-mode]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.deviceMode === mode);
+  });
+}
+
 function initMeasureRulerAndMagnet() {
   const ruler = document.createElement('div');
   ruler.id = 'studio-ruler-ribbon';
@@ -1915,7 +2041,10 @@ function initMeasureRulerAndMagnet() {
   const spatialBadge = document.createElement('div');
   spatialBadge.id = 'studio-spatial-badge';
 
-  document.body.append(ruler, guide, readout, magnetLine, spatialOverlay, spatialBadge);
+  const slotPopover = document.createElement('div');
+  slotPopover.id = 'studio-slot-popover';
+
+  document.body.append(ruler, guide, readout, magnetLine, spatialOverlay, spatialBadge, slotPopover);
 
   const updateGuideAtClientX = (clientX) => {
     const rulerRect = ruler.getBoundingClientRect();
@@ -2015,7 +2144,7 @@ function initMeasureRulerAndMagnet() {
         applyElementStyle(boxTransformSession.el, nextStyle);
       }
 
-      updateSpatialGuidesForBox(boxTransformSession.el);
+      updateHeightMeasurementLines(boxTransformSession.el);
     }
   });
 
@@ -2032,7 +2161,7 @@ async function initCanvaStudio() {
   if (studioInitialized) return;
   studioInitialized = true;
 
-  document.body.classList.add('studio-mode', 'studio-drawer-open');
+  document.body.classList.add('studio-mode', 'studio-drawer-open', 'studio-device-desktop');
   await loadAllSitePages();
   pushUndoSnapshot();
 
@@ -2044,6 +2173,9 @@ async function initCanvaStudio() {
       <span id="studio-save-status" class="mono" style="font-size:0.68rem;">Ready</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px;">
+      <button type="button" data-device-mode="desktop" class="studio-card-btn is-active" title="Desktop preview">Desktop</button>
+      <button type="button" data-device-mode="tablet" class="studio-card-btn" title="Tablet (768px) preview">Tablet</button>
+      <button type="button" data-device-mode="mobile" class="studio-card-btn" title="Mobile (390px) preview">Mobile</button>
       <button type="button" id="studio-undo-btn" class="studio-card-btn" title="Undo">Undo</button>
       <button type="button" id="studio-redo-btn" class="studio-card-btn" title="Redo">Redo</button>
       <button type="button" id="studio-publish-btn" class="btn btn-primary" style="padding:6px 14px;font-size:12px;">Publish</button>
@@ -2109,6 +2241,9 @@ async function initCanvaStudio() {
   document.body.append(topBar, formatBar, leftRail, sideDrawer);
   initMeasureRulerAndMagnet();
 
+  topBar.querySelectorAll('[data-device-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => setDevicePreviewMode(btn.dataset.deviceMode));
+  });
   topBar.querySelector('#studio-undo-btn')?.addEventListener('click', handleUndo);
   topBar.querySelector('#studio-redo-btn')?.addEventListener('click', handleRedo);
   topBar.querySelector('#studio-publish-btn')?.addEventListener('click', () => saveToSupabase('Published'));
@@ -2165,7 +2300,7 @@ async function initCanvaStudio() {
 
   document.addEventListener('mousedown', (e) => {
     if (isStudioUiNode(e.target)) return;
-    if (!e.target.closest('.featured-card, .hero-banner, .dynamic-block, [data-edit-text]')) {
+    if (!e.target.closest('.featured-card, .full-image-hero-frame, .dynamic-block, [data-edit-text], [data-edit-img], [data-image-slot-trigger]')) {
       clearBoxHandles();
       hideSpatialGuides();
     }

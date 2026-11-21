@@ -51,10 +51,17 @@
         <span class="mono tag-pill" data-edit-text="tag-5">DIGITAL MEDIA</span>
       </div>
 
-      <!-- Bold Feature Visual Block -->
-      <div class="hero-banner" data-edit-bg="hero-banner">
-        <div class="banner-content">
-          <span class="mono badge-mono" data-edit-text="banner-badge">RESEARCH ARCHIVE</span>
+      <!-- Full-Image Feature Block (Click image slot in Studio to swap) -->
+      <div class="full-image-hero-frame" data-slot-id="main-hero-full-image">
+        <img
+          src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1600&q=85"
+          alt="Full-bleed feature photography"
+          data-edit-img="main-full-image"
+          class="full-bleed-photo"
+        >
+        <div class="full-image-scrim"></div>
+        <div class="full-image-overlay-copy">
+          <span class="mono badge-light" data-edit-text="banner-badge">FULL IMAGE // FIELD ARCHIVE</span>
           <h2 data-edit-text="banner-heading">Somewhere between observation and understanding.</h2>
         </div>
       </div>
@@ -67,7 +74,7 @@
 
     <!-- Big Visual / Editorial Statement Showcase -->
     <section class="section-block">
-      <div class="big-showcase-card featured-card">
+      <div class="big-showcase-card featured-card" data-block-kind="BIG SHOWCASE">
         <div class="big-showcase-grid">
           <div>
             <span class="mono" data-edit-text="showcase-kicker">001.5 // VISUAL STATEMENT</span>
@@ -76,9 +83,9 @@
               Pairing sharp strategic positioning with tactile visual storytelling, field research, and interactive web builds.
             </p>
           </div>
-          <div class="big-showcase-visual-wrap">
+          <div class="big-showcase-visual-wrap" data-slot-id="showcase-photo-slot">
             <img
-              src="https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=85"
+              src="https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1400&q=85"
               alt="Strategy and visual workspace"
               data-edit-img="showcase-img"
               class="big-showcase-img"
@@ -95,12 +102,12 @@
         <h2 data-edit-text="why-title">Why Me</h2>
       </div>
       <div class="cards-grid">
-        <article class="featured-card">
+        <article class="featured-card" data-block-kind="INFO CARD">
           <span class="mono" data-edit-text="why-card1-tag">EMPIRICAL &amp; ANALYTICAL</span>
           <h3 data-edit-text="why-card1-title">Strategy grounded in observation</h3>
           <p data-edit-text="why-card1-body">Combining quantitative consumer modeling with field observations across Hong Kong and Southeast Asian markets.</p>
         </article>
-        <article class="featured-card">
+        <article class="featured-card" data-block-kind="INFO CARD">
           <span class="mono" data-edit-text="why-card2-tag">VISUAL &amp; TECHNICAL</span>
           <h3 data-edit-text="why-card2-title">Design meets execution</h3>
           <p data-edit-text="why-card2-body">Building interactive digital tools, color-graded visual logs, and clear strategic frameworks from scratch.</p>
@@ -115,7 +122,7 @@
         <h2 data-edit-text="writing-title">Latest Strategic Notes</h2>
       </div>
       <div class="cards-grid">
-        <article class="featured-card">
+        <article class="featured-card" data-block-kind="ARTICLE CARD">
           <div class="featured-meta">
             <span class="mono">BRAND INVESTIGATIONS</span>
             <span class="mono">6 MIN READ</span>
@@ -124,7 +131,7 @@
           <p data-edit-text="home-post1-body">An analytical look at how physical availability often masks underlying positioning vulnerabilities in emerging retail markets.</p>
           <a href="pages/blog.html" class="read-link">Read in Blog &rarr;</a>
         </article>
-        <article class="featured-card">
+        <article class="featured-card" data-block-kind="ARTICLE CARD">
           <div class="featured-meta">
             <span class="mono">CONSUMER PSYCHOLOGY</span>
             <span class="mono">4 MIN READ</span>
@@ -141,7 +148,7 @@
 
     <!-- Newsletter Anchor -->
     <section id="newsletter" class="section-block">
-      <div class="featured-card">
+      <div class="featured-card" data-block-kind="DISPATCH CARD">
         <span class="mono">DISPATCH</span>
         <h3 data-edit-text="newsletter-title" style="margin-top:8px;">Stay updated with new investigations</h3>
         <p data-edit-text="newsletter-desc">Occasional essays on marketing strategy, consumer behavior, and digital builds.</p>
