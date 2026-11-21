@@ -66,7 +66,7 @@ let editorState = {
   brand: {
     logoText: 'MARVEL TANG',
     logoUrl: '',
-    primaryColor: '#0F172A',
+    primaryColor: '#202124',
     accentColor: '#71869A'
   },
   images: {},
@@ -82,7 +82,10 @@ let autoSaveTimer = null;
 let isApplyingHistory = false;
 let activeEditableEl = null;
 let activeStyleKey = null;
+let activeDrawerTab = 'pages';
 let studioInitialized = false;
+let magnetEnabled = true;
+let isDraggingGuide = false;
 const chartInstances = new Map();
 
 function cloneState(obj) {
@@ -94,27 +97,40 @@ function isStudioUiNode(el) {
   return Boolean(
     el.closest('#studio-top-bar') ||
       el.closest('#studio-format-bar') ||
-      el.closest('#studio-page-bar') ||
+      el.closest('#studio-ruler-ribbon') ||
+      el.closest('#studio-drag-guide') ||
+      el.closest('#studio-guide-readout') ||
+      el.closest('#studio-magnet-line') ||
       el.closest('#studio-left-rail') ||
       el.closest('#studio-side-drawer')
   );
 }
 
 function extractYouTubeId(urlOrId = '') {
-  const trimmed = urlOrId.trim();
+  const trimmed = (urlOrId || '').trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
   const match = trimmed.match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
   return match ? match[1] : 'dQw4w9WgXcQ';
 }
 
 function toEmbedPdfUrl(url = '') {
-  const trimmed = url.trim();
+  const trimmed = (url || '').trim();
   if (!trimmed) return '';
   if (trimmed.includes('drive.google.com/file/d/')) {
     const id = trimmed.split('/file/d/')[1]?.split('/')[0];
     return id ? `https://drive.google.com/file/d/${id}/preview` : trimmed;
   }
   return trimmed;
+}
+
+function rgbOrHexToHex(colorVal, fallback = '#202124') {
+  if (!colorVal) return fallback;
+  const str = String(colorVal).trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(str)) return str;
+  const match = str.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!match) return fallback;
+  const toHex = (n) => Number(n).toString(16).padStart(2, '0');
+  return `#${toHex(match[1])}${toHex(match[2])}${toHex(match[3])}`;
 }
 
 function applyElementStyle(el, styleObj = {}) {
@@ -179,7 +195,7 @@ function mountParallelPageShellIfNeeded() {
     <div class="page-header">
       <span class="mono" data-edit-text="parallel-kicker">${pageCategory.toUpperCase()}</span>
       <h1 data-edit-text="parallel-title">${pageTitle}</h1>
-      <p data-edit-text="parallel-subtitle">Add content, widgets, media, or sections below.</p>
+      <p data-edit-text="parallel-subtitle">Add content, templates, carousels, or sections below.</p>
     </div>
     <div id="dynamic-blocks-container"></div>
   `;
@@ -194,7 +210,22 @@ function captureDomState() {
 
     const updated = cloneState(block);
     el.querySelectorAll('[data-block-field]').forEach((fieldEl) => {
-      updated[fieldEl.dataset.blockField] = fieldEl.innerHTML.trim();
+      const path = fieldEl.dataset.blockField;
+      if (path.startsWith('slides.')) {
+        const [, idxStr, prop] = path.split('.');
+        const idx = Number(idxStr);
+        if (updated.slides && updated.slides[idx]) {
+          updated.slides[idx][prop] = fieldEl.innerHTML.trim();
+        }
+      } else if (path.startsWith('cards.')) {
+        const [, idxStr, prop] = path.split('.');
+        const idx = Number(idxStr);
+        if (updated.cards && updated.cards[idx]) {
+          updated.cards[idx][prop] = fieldEl.innerHTML.trim();
+        }
+      } else {
+        updated[path] = fieldEl.innerHTML.trim();
+      }
     });
 
     if (updated.type === 'table') {
@@ -205,6 +236,12 @@ function captureDomState() {
         rows.push(cells);
       });
       updated.rows = rows;
+    }
+
+    if (updated.type === 'list') {
+      const items = [];
+      el.querySelectorAll('li').forEach((li) => items.push(li.innerText.trim()));
+      updated.items = items;
     }
 
     return updated;
@@ -249,8 +286,57 @@ function pushUndoSnapshot() {
   if (last && JSON.stringify(last) === JSON.stringify(current)) return;
 
   undoStack.push(current);
-  if (undoStack.length > 60) undoStack.shift();
+  if (undoStack.length > 80) undoStack.shift();
   redoStack = [];
+}
+
+function applySnapshotToDom(snapshot) {
+  if (!snapshot) return;
+  isApplyingHistory = true;
+  editorState = cloneState(snapshot);
+
+  Object.entries(editorState.texts || {}).forEach(([key, htmlVal]) => {
+    const el = document.querySelector(`[data-edit-text="${key}"]`);
+    if (el && !isStudioUiNode(el)) el.innerHTML = htmlVal;
+  });
+
+  Object.entries(editorState.colors || {}).forEach(([cssVar, hex]) => {
+    if (cssVar && hex) document.documentElement.style.setProperty(cssVar, hex);
+  });
+
+  Object.entries(editorState.backgrounds || {}).forEach(([bgKey, bgUrl]) => {
+    const bgEl = document.querySelector(`[data-edit-bg="${bgKey}"]`);
+    if (bgEl && bgUrl) {
+      bgEl.style.backgroundImage = `linear-gradient(to top, rgba(12, 15, 20, 0.74), rgba(12, 15, 20, 0.18)), url('${bgUrl}')`;
+    }
+  });
+
+  applyBrandToPage(editorState.brand);
+  renderDynamicBlocks(editorState.blocks || [], true);
+  bindEditableTargets();
+
+  Object.entries(editorState.textStyles || {}).forEach(([key, st]) => {
+    const el = document.querySelector(`[data-style-key="${key}"], [data-edit-text="${key}"]`);
+    if (el) applyElementStyle(el, st);
+  });
+
+  isApplyingHistory = false;
+  scheduleAutoSave();
+}
+
+function handleUndo() {
+  if (undoStack.length <= 1) return;
+  const popped = undoStack.pop();
+  redoStack.push(popped);
+  const prev = undoStack[undoStack.length - 1];
+  if (prev) applySnapshotToDom(prev);
+}
+
+function handleRedo() {
+  if (!redoStack.length) return;
+  const next = redoStack.pop();
+  undoStack.push(cloneState(next));
+  applySnapshotToDom(next);
 }
 
 function selectEditableElement(el, styleKey) {
@@ -273,14 +359,397 @@ function syncFormatBarToElement(el, styleKey) {
   const currentOpacity =
     st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(getComputedStyle(el).opacity || 1);
 
-  bar.querySelector('#fmt-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#0F172A');
-  bar.querySelector('#fmt-drop-color').value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
-  bar.querySelector('#fmt-font-family').value = st.fontFamily || '';
-  bar.querySelector('#fmt-font-size').value = st.fontSize || computedPx;
-  bar.querySelector('#fmt-opacity').value = Math.round(currentOpacity * 100);
-  bar.querySelector('#fmt-opacity-val').textContent = `${Math.round(currentOpacity * 100)}%`;
-  bar.querySelector('#fmt-effect').value = st.effect || 'none';
-  bar.querySelector('#fmt-animation').value = st.animation || 'none';
+  const textColorInput = bar.querySelector('#fmt-text-color');
+  const dropColorInput = bar.querySelector('#fmt-drop-color');
+  const fontFamilySelect = bar.querySelector('#fmt-font-family');
+  const fontSizeInput = bar.querySelector('#fmt-font-size');
+  const opacityInput = bar.querySelector('#fmt-opacity');
+  const opacityVal = bar.querySelector('#fmt-opacity-val');
+  const effectSelect = bar.querySelector('#fmt-effect');
+  const animationSelect = bar.querySelector('#fmt-animation');
+
+  if (textColorInput) textColorInput.value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#202124');
+  if (dropColorInput) dropColorInput.value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
+  if (fontFamilySelect) fontFamilySelect.value = st.fontFamily || '';
+  if (fontSizeInput) fontSizeInput.value = st.fontSize || computedPx;
+  if (opacityInput) opacityInput.value = Math.round(currentOpacity * 100);
+  if (opacityVal) opacityVal.textContent = `${Math.round(currentOpacity * 100)}%`;
+  if (effectSelect) effectSelect.value = st.effect || 'none';
+  if (animationSelect) animationSelect.value = st.animation || 'none';
+}
+
+function updateSelectedElementStyle(patch) {
+  if (!activeEditableEl || !activeStyleKey) return;
+  pushUndoSnapshot();
+  editorState.textStyles = editorState.textStyles || {};
+  editorState.textStyles[activeStyleKey] = {
+    ...(editorState.textStyles[activeStyleKey] || {}),
+    ...patch
+  };
+  applyElementStyle(activeEditableEl, editorState.textStyles[activeStyleKey]);
+  syncFormatBarToElement(activeEditableEl, activeStyleKey);
+  scheduleAutoSave();
+}
+
+function moveBlockById(id, mode) {
+  const list = editorState.blocks || [];
+  const idx = list.findIndex((b) => b.id === id);
+  if (idx < 0) return;
+
+  pushUndoSnapshot();
+  const [moved] = list.splice(idx, 1);
+
+  if (mode === 'up' && idx > 0) {
+    list.splice(idx - 1, 0, moved);
+  } else if (mode === 'down' && idx <= list.length) {
+    list.splice(Math.min(idx + 1, list.length), 0, moved);
+  } else if (mode === 'top') {
+    list.unshift(moved);
+  } else {
+    list.splice(idx, 0, moved);
+  }
+
+  const isEditMode = new URLSearchParams(window.location.search).get('edit') === 'true';
+  renderDynamicBlocks(list, isEditMode);
+  if (isEditMode) bindEditableTargets();
+  scheduleAutoSave();
+}
+
+function bindEditableTargets() {
+  document.querySelectorAll('[data-edit-text]').forEach((el) => {
+    if (isStudioUiNode(el)) return;
+    el.setAttribute('contenteditable', 'true');
+    const key = el.dataset.editText;
+    el.dataset.styleKey = key;
+    if (editorState.textStyles?.[key]) {
+      applyElementStyle(el, editorState.textStyles[key]);
+    }
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectEditableElement(el, key);
+    });
+    el.addEventListener('input', () => scheduleAutoSave());
+    el.addEventListener('blur', () => {
+      pushUndoSnapshot();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('#dynamic-blocks-container [data-block-field]').forEach((el) => {
+    const key = el.dataset.styleKey || `${el.closest('[data-block-id]')?.dataset.blockId}:${el.dataset.blockField}`;
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectEditableElement(el, key);
+    });
+    el.addEventListener('input', () => scheduleAutoSave());
+    el.addEventListener('blur', () => {
+      pushUndoSnapshot();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-remove-block]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.removeBlock;
+      pushUndoSnapshot();
+      editorState.blocks = (editorState.blocks || []).filter((b) => b.id !== id);
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-move-block]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      moveBlockById(btn.dataset.moveBlock, btn.dataset.dir || 'up');
+    });
+  });
+
+  document.querySelectorAll('[data-yt-url]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === input.dataset.ytUrl);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.ytUrl = input.value.trim();
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-yt-autoplay]').forEach((chk) => {
+    chk.addEventListener('change', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === chk.dataset.ytAutoplay);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.autoplay = chk.checked;
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-pdf-url]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === input.dataset.pdfUrl);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.pdfUrl = input.value.trim();
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-embed-url]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === input.dataset.embedUrl);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.embedUrl = input.value.trim();
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-project-url]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === input.dataset.projectUrl);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.url = input.value.trim();
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-slide-img]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const [blockId, idxStr] = input.dataset.slideImg.split('::');
+      const block = (editorState.blocks || []).find((b) => b.id === blockId);
+      const sIdx = Number(idxStr);
+      if (!block || !block.slides || !block.slides[sIdx]) return;
+      pushUndoSnapshot();
+      block.slides[sIdx].imageUrl = input.value.trim();
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-add-slide]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const block = (editorState.blocks || []).find((b) => b.id === btn.dataset.addSlide);
+      if (!block) return;
+      pushUndoSnapshot();
+      block.slides = block.slides || [];
+      block.slides.push({
+        imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=80',
+        caption: `Slide ${block.slides.length + 1} — Research & field note`
+      });
+      block.activeIndex = block.slides.length - 1;
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('[data-tpl-img]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const [blockId, fieldName] = input.dataset.tplImg.split('::');
+      const block = (editorState.blocks || []).find((b) => b.id === blockId);
+      if (!block) return;
+      pushUndoSnapshot();
+      if (fieldName.startsWith('cardImg_')) {
+        const cIdx = Number(fieldName.replace('cardImg_', ''));
+        if (block.cards && block.cards[cIdx]) {
+          block.cards[cIdx].imageUrl = input.value.trim();
+        }
+      } else {
+        block[fieldName] = input.value.trim();
+      }
+      renderDynamicBlocks(editorState.blocks, true);
+      bindEditableTargets();
+      scheduleAutoSave();
+    });
+  });
+}
+
+function bindCarouselControls(wrapper, block, isEditMode) {
+  const slides = Array.isArray(block.slides) && block.slides.length
+    ? block.slides
+    : [
+        {
+          imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
+          caption: 'Coastal observation & field study'
+        }
+      ];
+  let idx = Math.min(Math.max(Number(block.activeIndex || 0), 0), slides.length - 1);
+
+  const showSlide = (nextIdx) => {
+    idx = (nextIdx + slides.length) % slides.length;
+    block.activeIndex = idx;
+    wrapper.querySelectorAll('.carousel-slide').forEach((s, i) => s.classList.toggle('active', i === idx));
+    wrapper.querySelectorAll('.carousel-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+  };
+
+  showSlide(idx);
+  wrapper.querySelector('[data-carousel-prev]')?.addEventListener('click', () => showSlide(idx - 1));
+  wrapper.querySelector('[data-carousel-next]')?.addEventListener('click', () => showSlide(idx + 1));
+  wrapper.querySelectorAll('[data-carousel-dot]').forEach((dot) => {
+    dot.addEventListener('click', () => showSlide(Number(dot.dataset.carouselDot)));
+  });
+
+  if (isEditMode) {
+    const activeUrlInput = wrapper.querySelector('[data-active-slide-url]');
+    if (activeUrlInput) {
+      activeUrlInput.value = slides[idx]?.imageUrl || '';
+      activeUrlInput.dataset.slideImg = `${block.id}::${idx}`;
+    }
+  }
+}
+
+function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
+  const tpl = block.templateId || 'two-col-text';
+  const hKey = `${styleKeyPrefix}:heading`;
+  const bKey = `${styleKeyPrefix}:body`;
+
+  if (tpl === 'split-photo') {
+    return `
+      <span class="mono">TEMPLATE // SPLIT + IMAGE SLOT</span>
+      <div class="tpl-grid-2" style="align-items:center;">
+        <div>
+          <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}">${block.heading || 'Editorial Feature With Visual'}</h3>
+          <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}">${block.body || 'Pair concise strategic framing with a dedicated image slot.'}</p>
+          ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Image URL" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+        </div>
+        <div>
+          ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Feature'}" class="tpl-img-slot" style="height:260px;">` : `<div class="tpl-img-slot" style="height:260px;display:flex;align-items:center;justify-content:center;"><span class="mono">IMAGE SLOT</span></div>`}
+        </div>
+      </div>
+    `;
+  }
+
+  if (tpl === 'hero-feature') {
+    return `
+      <span class="mono">TEMPLATE // HERO FEATURE + IMAGE SLOT</span>
+      ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Hero'}" class="tpl-img-slot" style="height:280px;margin:14px 0 18px 0;">` : `<div class="tpl-img-slot" style="height:240px;margin:14px 0 18px 0;display:flex;align-items:center;justify-content:center;"><span class="mono">HERO IMAGE SLOT</span></div>`}
+      ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Hero image URL" style="width:100%;padding:6px;margin-bottom:12px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+      <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}">${block.heading || 'Flagship Case or Essay Title'}</h3>
+      <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Lead statement highlighting the core market question and outcome.'}</p>
+    `;
+  }
+
+  if (tpl === 'gallery-trio') {
+    const cards = block.cards || [
+      { title: 'Frame 01', body: 'Observation note', imageUrl: '' },
+      { title: 'Frame 02', body: 'Observation note', imageUrl: '' },
+      { title: 'Frame 03', body: 'Observation note', imageUrl: '' }
+    ];
+    return `
+      <span class="mono">TEMPLATE // 3-SLOT VISUAL STRIP</span>
+      <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Visual Sequence'}</h3>
+      <div class="tpl-grid-3">
+        ${cards
+          .map(
+            (c, i) => `
+          <div>
+            ${c.imageUrl ? `<img src="${c.imageUrl}" alt="${c.title}" class="tpl-img-slot" style="height:170px;margin-bottom:10px;">` : `<div class="tpl-img-slot" style="height:170px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;"><span class="mono">SLOT ${i + 1}</span></div>`}
+            ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::cardImg_${i}" value="${c.imageUrl || ''}" placeholder="Image URL ${i + 1}" style="width:100%;padding:5px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);font-size:11px;">` : ''}
+            <h4 contenteditable="${isEditMode}" data-block-field="cards.${i}.title" style="font-size:1rem;margin-bottom:6px;">${c.title}</h4>
+            <p contenteditable="${isEditMode}" data-block-field="cards.${i}.body" style="font-size:0.88rem;margin-bottom:0;">${c.body}</p>
+          </div>
+        `
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  if (tpl === 'case-study-split') {
+    return `
+      <span class="mono">TEMPLATE // CASE BRIEF + IMAGE SLOT</span>
+      <div class="tpl-grid-2">
+        <div>
+          <span class="mono" contenteditable="${isEditMode}" data-block-field="metric">${block.metric || 'OUTCOME // +34% ENGAGEMENT'}</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Brand & Strategy Sprint'}</h3>
+          <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Context, diagnostic insight, execution plan, and measurable result.'}</p>
+        </div>
+        <div>
+          ${block.imageUrl ? `<img src="${block.imageUrl}" alt="${block.heading || 'Case'}" class="tpl-img-slot" style="height:220px;">` : `<div class="tpl-img-slot" style="height:220px;display:flex;align-items:center;justify-content:center;"><span class="mono">CASE VISUAL SLOT</span></div>`}
+          ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Case image URL" style="width:100%;padding:6px;margin-top:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  if (tpl === 'thesis-grid') {
+    const cards = block.cards || [
+      { title: '01 / Positioning', body: 'Clear differentiation over crowded features.' },
+      { title: '02 / Behavior', body: 'Watch what people choose under real constraints.' },
+      { title: '03 / Systems', body: 'Repeatable workflows beat one-off bursts.' }
+    ];
+    return `
+      <span class="mono">TEMPLATE // 3-PILLAR TEXT GRID (NO IMAGES)</span>
+      <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Core Thesis Pillars'}</h3>
+      <div class="tpl-grid-3">
+        ${cards
+          .map(
+            (c, i) => `
+          <div style="padding:18px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-color);">
+            <h4 contenteditable="${isEditMode}" data-block-field="cards.${i}.title" style="font-size:1rem;margin-bottom:8px;">${c.title}</h4>
+            <p contenteditable="${isEditMode}" data-block-field="cards.${i}.body" style="font-size:0.9rem;margin-bottom:0;">${c.body}</p>
+          </div>
+        `
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  if (tpl === 'brief-memo') {
+    return `
+      <span class="mono" contenteditable="${isEditMode}" data-block-field="kicker">${block.kicker || 'TEMPLATE // EXECUTIVE BRIEF (NO IMAGE)'}</span>
+      <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Strategic Memo Summary'}</h3>
+      <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}">${block.body || 'Concise summary of problem statement, hypotheses, and recommended next steps without heavy imagery.'}</p>
+      <p contenteditable="${isEditMode}" data-block-field="footnote" class="mono" style="margin-bottom:0;">${block.footnote || 'STATUS // VERIFIED NOTES'}</p>
+    `;
+  }
+
+  if (tpl === 'index-ledger') {
+    const cards = block.cards || [
+      { title: 'Entry A — Market Signal', body: 'Early shift in demand pattern.' },
+      { title: 'Entry B — Execution Friction', body: 'Bottleneck identified in user journey.' }
+    ];
+    return `
+      <span class="mono">TEMPLATE // INDEX LEDGER (NO IMAGE)</span>
+      <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Research Log'}</h3>
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:14px;">
+        ${cards
+          .map(
+            (c, i) => `
+          <div style="padding-bottom:14px;border-bottom:1px solid var(--border-color);">
+            <strong contenteditable="${isEditMode}" data-block-field="cards.${i}.title" style="display:block;margin-bottom:4px;">${c.title}</strong>
+            <p contenteditable="${isEditMode}" data-block-field="cards.${i}.body" style="margin-bottom:0;">${c.body}</p>
+          </div>
+        `
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  // Default: two-col-text (No Image)
+  return `
+    <span class="mono">TEMPLATE // TWO-COLUMN ESSAY (NO IMAGE)</span>
+    <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Comparative Analysis'}</h3>
+    <div class="tpl-grid-2">
+      <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${bKey}" style="margin-bottom:0;">${block.body || 'Left column: unpack the hypothesis, market context, and observable signal.'}</p>
+      <p contenteditable="${isEditMode}" data-block-field="rightCol" style="margin-bottom:0;">${block.rightCol || 'Right column: unpack the counter-argument, trade-off, and practical implication.'}</p>
+    </div>
+  `;
 }
 
 function renderDynamicBlocks(blocks, isEditMode) {
@@ -296,8 +765,13 @@ function renderDynamicBlocks(blocks, isEditMode) {
     wrapper.className = 'section-block dynamic-block';
     wrapper.dataset.blockId = block.id;
 
-    const removeBtnHtml = isEditMode
-      ? `<button type="button" data-remove-block="${block.id}" class="studio-card-btn" style="float:right;">Remove</button>`
+    const controlsHtml = isEditMode
+      ? `<div style="float:right;display:flex;gap:6px;margin-bottom:10px;">
+           <button type="button" data-move-block="${block.id}" data-dir="top" class="studio-card-btn" title="Move to Top">Top</button>
+           <button type="button" data-move-block="${block.id}" data-dir="up" class="studio-card-btn" title="Move Up">↑</button>
+           <button type="button" data-move-block="${block.id}" data-dir="down" class="studio-card-btn" title="Move Down">↓</button>
+           <button type="button" data-remove-block="${block.id}" class="studio-card-btn">Remove</button>
+         </div>`
       : '';
 
     const styleKeyPrefix = `block:${block.id}`;
@@ -307,23 +781,153 @@ function renderDynamicBlocks(blocks, isEditMode) {
       const tag = tagMap[block.tag] || 'p';
       const fKey = `${styleKeyPrefix}:content`;
       wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <${tag} contenteditable="${isEditMode}" data-block-field="content" data-style-key="${fKey}">${block.content || 'Editable text block...'}</${tag}>
+        ${controlsHtml}
+        <${tag} contenteditable="${isEditMode}" data-block-field="content" data-style-key="${fKey}">${block.content || 'Editable text block — click to edit.'}</${tag}>
       `;
       applyElementStyle(wrapper.querySelector(`[data-style-key="${fKey}"]`), editorState.textStyles?.[fKey]);
+    } else if (block.type === 'info') {
+      const infoKey = `${styleKeyPrefix}:infoBody`;
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <span class="mono" contenteditable="${isEditMode}" data-block-field="tag">${block.tag || 'INFO // NOTE'}</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Information Block'}</h3>
+          <p contenteditable="${isEditMode}" data-block-field="infoBody" data-style-key="${infoKey}" style="margin-bottom:0;">${block.infoBody || 'Add background context, key dates, specs, or reference notes here.'}</p>
+        </div>
+      `;
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${infoKey}"]`), editorState.textStyles?.[infoKey]);
+    } else if (block.type === 'project-link') {
+      const pKey = `${styleKeyPrefix}:summary`;
+      const safeHref = block.url && /^https?:\/\//i.test(block.url.trim()) ? block.url.trim() : '#';
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <div class="featured-meta">
+            <span class="mono" contenteditable="${isEditMode}" data-block-field="badge">${block.badge || 'PROJECT LINK'}</span>
+            <span class="mono" contenteditable="${isEditMode}" data-block-field="status">${block.status || 'LIVE // SUPABASE SYNCED'}</span>
+          </div>
+          <h3 contenteditable="${isEditMode}" data-block-field="title">${block.title || 'Featured Project'}</h3>
+          <p contenteditable="${isEditMode}" data-block-field="summary" data-style-key="${pKey}">${block.summary || 'Interactive build or case study synced to Supabase.'}</p>
+          ${isEditMode ? `<div style="margin-bottom:14px;"><input type="text" data-project-url="${block.id}" value="${block.url || ''}" placeholder="https://..." style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);font-size:12px;"></div>` : ''}
+          <a href="${safeHref}" target="_blank" rel="noopener" class="read-link">Open Project &rarr;</a>
+        </div>
+      `;
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${pKey}"]`), editorState.textStyles?.[pKey]);
+    } else if (block.type === 'carousel') {
+      const slides = Array.isArray(block.slides) && block.slides.length
+        ? block.slides
+        : [
+            {
+              imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
+              caption: 'Slide 1 — Visual study'
+            },
+            {
+              imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=80',
+              caption: 'Slide 2 — Strategy & workspace note'
+            }
+          ];
+
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <div class="featured-meta">
+            <span class="mono">CAROUSEL</span>
+            ${isEditMode ? `<button type="button" data-add-slide="${block.id}" class="studio-card-btn">+ Add Slide</button>` : ''}
+          </div>
+          <h3 contenteditable="${isEditMode}" data-block-field="title">${block.title || 'Visual Carousel'}</h3>
+          ${
+            isEditMode
+              ? `<div style="margin-bottom:10px;"><input type="text" data-active-slide-url="${block.id}" value="" placeholder="Active slide image URL" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);font-size:12px;"></div>`
+              : ''
+          }
+          <div class="carousel-stage">
+            ${slides
+              .map(
+                (sl, sIdx) => `
+              <div class="carousel-slide ${sIdx === (block.activeIndex || 0) ? 'active' : ''}">
+                <img src="${sl.imageUrl}" alt="${sl.caption || `Slide ${sIdx + 1}`}">
+                <div class="carousel-caption-bar">
+                  <p contenteditable="${isEditMode}" data-block-field="slides.${sIdx}.caption" style="margin:0;font-size:0.92rem;">${sl.caption || ''}</p>
+                  <span class="mono">${sIdx + 1} / ${slides.length}</span>
+                </div>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+          <div class="carousel-controls">
+            <div style="display:flex;gap:8px;">
+              <button type="button" data-carousel-prev class="studio-card-btn">&larr; Prev</button>
+              <button type="button" data-carousel-next class="studio-card-btn">Next &rarr;</button>
+            </div>
+            <div class="carousel-dots">
+              ${slides
+                .map((_, sIdx) => `<button type="button" data-carousel-dot="${sIdx}" class="carousel-dot ${sIdx === (block.activeIndex || 0) ? 'active' : ''}" aria-label="Slide ${sIdx + 1}"></button>`)
+                .join('')}
+            </div>
+          </div>
+        </div>
+      `;
+      bindCarouselControls(wrapper, block, isEditMode);
+    } else if (block.type === 'template') {
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          ${renderTemplateHtml(block, isEditMode, styleKeyPrefix)}
+        </div>
+      `;
+      const hEl = wrapper.querySelector(`[data-style-key="${styleKeyPrefix}:heading"]`);
+      const bEl = wrapper.querySelector(`[data-style-key="${styleKeyPrefix}:body"]`);
+      if (hEl) applyElementStyle(hEl, editorState.textStyles?.[`${styleKeyPrefix}:heading`]);
+      if (bEl) applyElementStyle(bEl, editorState.textStyles?.[`${styleKeyPrefix}:body`]);
     } else if (block.type === 'divider') {
       wrapper.innerHTML = `
-        ${removeBtnHtml}
+        ${controlsHtml}
         <hr style="border:none;border-top:1.5px solid var(--border-color);margin:16px 0;">
+      `;
+    } else if (block.type === 'quote') {
+      const qKey = `${styleKeyPrefix}:quote`;
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <blockquote class="featured-card" style="border-left:4px solid var(--text-main);">
+          <p contenteditable="${isEditMode}" data-block-field="quote" data-style-key="${qKey}" style="font-size:1.25rem;font-weight:600;color:var(--text-main);">${block.quote || 'A sharp strategic observation goes here.'}</p>
+          <span class="mono" contenteditable="${isEditMode}" data-block-field="cite">${block.cite || 'MARVEL TANG // FIELD NOTE'}</span>
+        </blockquote>
+      `;
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${qKey}"]`), editorState.textStyles?.[qKey]);
+    } else if (block.type === 'callout') {
+      const cKey = `${styleKeyPrefix}:body`;
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card" style="background:var(--soft-silver);">
+          <span class="mono" contenteditable="${isEditMode}" data-block-field="label">${block.label || 'KEY TAKEAWAY'}</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Highlighted Framework'}</h3>
+          <p contenteditable="${isEditMode}" data-block-field="body" data-style-key="${cKey}" style="margin-bottom:0;">${block.body || 'Summarize the core insight or action step here.'}</p>
+        </div>
+      `;
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${cKey}"]`), editorState.textStyles?.[cKey]);
+    } else if (block.type === 'list') {
+      const items = Array.isArray(block.items) && block.items.length
+        ? block.items
+        : ['First point or finding', 'Second point or observation', 'Third actionable step'];
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <span class="mono">INDEX LIST</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Structured Notes'}</h3>
+          <ul style="padding-left:20px;display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+            ${items.map((item) => `<li contenteditable="${isEditMode}">${item}</li>`).join('')}
+          </ul>
+        </div>
       `;
     } else if (block.type === 'pdf') {
       const pdfUrl = toEmbedPdfUrl(block.pdfUrl || '');
       wrapper.innerHTML = `
-        ${removeBtnHtml}
+        ${controlsHtml}
         <div class="featured-card">
           <span class="mono">PDF DOCUMENT</span>
           <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Research Document'}</h3>
-          ${isEditMode ? `<div style="margin:8px 0;"><input type="text" data-pdf-url="${block.id}" value="${block.pdfUrl || ''}" placeholder="Paste PDF URL or Google Drive link" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);"></div>` : ''}
+          ${isEditMode ? `<div style="margin:8px 0;"><input type="text" data-pdf-url="${block.id}" value="${block.pdfUrl || ''}" placeholder="Paste PDF URL or Google Drive link" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);"></div>` : ''}
           ${
             pdfUrl
               ? `<div class="embed-container" style="height:460px;"><iframe src="${pdfUrl}" title="${block.title || 'PDF'}" loading="lazy"></iframe></div>`
@@ -331,11 +935,25 @@ function renderDynamicBlocks(blocks, isEditMode) {
           }
         </div>
       `;
+    } else if (block.type === 'embed') {
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <span class="mono">INTERACTIVE EMBED</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Embedded App or Deck'}</h3>
+          ${isEditMode ? `<div style="margin:8px 0;"><input type="text" data-embed-url="${block.id}" value="${block.embedUrl || ''}" placeholder="Paste embed URL (https://...)" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);"></div>` : ''}
+          ${
+            block.embedUrl
+              ? `<div class="embed-container"><iframe src="${block.embedUrl}" title="${block.title || 'Embed'}" loading="lazy"></iframe></div>`
+              : `<p class="mono">Paste an embed URL above to display interactive content.</p>`
+          }
+        </div>
+      `;
     } else if (block.type === 'author') {
       const aKey = `${styleKeyPrefix}:bio`;
       wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <div class="featured-card" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
+        ${controlsHtml}
+        <div class="featured-card" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
           ${block.avatarUrl ? `<img src="${block.avatarUrl}" alt="${block.name || 'Author'}" style="width:68px;height:68px;border-radius:50%;object-fit:cover;border:1px solid var(--border-color);">` : ''}
           <div style="flex:1;min-width:220px;">
             <span class="mono">AUTHOR</span>
@@ -350,7 +968,7 @@ function renderDynamicBlocks(blocks, isEditMode) {
       const autoplay = Boolean(block.autoplay);
       const embedSrc = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=${autoplay ? 1 : 0}&mute=${autoplay ? 1 : 0}`;
       wrapper.innerHTML = `
-        ${removeBtnHtml}
+        ${controlsHtml}
         <div class="featured-card">
           <div class="featured-meta">
             <span class="mono">YOUTUBE VIDEO</span>
@@ -359,274 +977,79 @@ function renderDynamicBlocks(blocks, isEditMode) {
             </label>
           </div>
           <h3 contenteditable="${isEditMode}" data-block-field="title">${block.title || 'Embedded Video'}</h3>
-          ${isEditMode ? `<div style="margin-bottom:10px;"><input type="text" data-yt-url="${block.id}" value="${block.ytUrl || ''}" placeholder="Paste YouTube URL or Video ID" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);"></div>` : ''}
-          <div class="embed-container" style="height:440px;">
-            <iframe src="${embedSrc}" title="${block.title || 'YouTube Video'}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+          ${isEditMode ? `<div style="margin-bottom:10px;"><input type="text" data-yt-url="${block.id}" value="${block.ytUrl || ''}" placeholder="Paste YouTube URL or Video ID" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);"></div>` : ''}
+          <div class="embed-container" style="height:420px;">
+            <iframe src="${embedSrc}" title="${block.title || 'YouTube Video'}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
           </div>
         </div>
       `;
-    } else if (block.type === 'image-block') {
+    } else if (block.type === 'image') {
+      const iKey = `${styleKeyPrefix}:caption`;
       wrapper.innerHTML = `
-        ${removeBtnHtml}
+        ${controlsHtml}
         <div class="featured-card">
-          <span class="mono">IMAGE</span>
-          <div style="margin-top:12px;">
-            <img src="${block.src || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80'}" alt="${block.caption || 'Uploaded visual'}" style="max-width:100%;border-radius:8px;display:block;">
-          </div>
-          <p contenteditable="${isEditMode}" data-block-field="caption" style="margin-top:10px;">${block.caption || 'Image caption...'}</p>
+          <span class="mono">VISUAL</span>
+          ${block.url ? `<img src="${block.url}" alt="${block.caption || 'Visual'}" style="width:100%;max-height:480px;object-fit:cover;border-radius:8px;margin:14px 0;">` : `<p class="mono" style="margin:12px 0;">Upload or link an image in Studio mode.</p>`}
+          <p contenteditable="${isEditMode}" data-block-field="caption" data-style-key="${iKey}" style="margin:0;">${block.caption || 'Add a bold caption...'}</p>
         </div>
       `;
-    } else if (block.type === 'quiz') {
-      const options = block.options || ['Option A', 'Option B', 'Option C'];
-      wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <div class="featured-card">
-          <span class="mono">INTERACTIVE QUIZ</span>
-          <h3 contenteditable="${isEditMode}" data-block-field="question" style="margin-top:8px;">${block.question || 'Quick check question?'}</h3>
-          <div class="quiz-options">
-            ${options
-              .map(
-                (opt, oIdx) => `
-              <button type="button" class="quiz-opt-btn" data-correct="${oIdx === (block.correctIndex ?? 0)}" style="display:block;margin:6px 0;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-main);cursor:pointer;">
-                ${opt}
-              </button>`
-              )
-              .join('')}
-          </div>
-          <p class="quiz-feedback mono" style="margin-top:10px;"></p>
-        </div>
-      `;
-      wrapper.querySelectorAll('.quiz-opt-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const feedback = wrapper.querySelector('.quiz-feedback');
-          feedback.textContent = btn.dataset.correct === 'true' ? 'Correct!' : 'Try another option.';
-        });
-      });
-    } else if (block.type === 'survey') {
-      const choices = block.choices || ['Strongly Agree', 'Agree', 'Neutral', 'Disagree'];
-      const totalVotes = block.counts ? Object.values(block.counts).reduce((a, b) => a + b, 0) : 0;
-      wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <div class="featured-card">
-          <span class="mono">POLL / SURVEY</span>
-          <h3 contenteditable="${isEditMode}" data-block-field="prompt" style="margin-top:8px;">${block.prompt || 'How useful was this breakdown?'}</h3>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
-            ${choices
-              .map(
-                (c) =>
-                  `<button type="button" class="survey-choice-btn" data-choice="${c}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border-color);background:var(--soft-silver);color:var(--text-main);cursor:pointer;">${c}</button>`
-              )
-              .join('')}
-          </div>
-          <p class="survey-status mono" style="margin-top:10px;">Responses recorded: ${totalVotes}</p>
-        </div>
-      `;
-      wrapper.querySelectorAll('.survey-choice-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const choice = btn.dataset.choice;
-          block.counts = block.counts || {};
-          block.counts[choice] = (block.counts[choice] || 0) + 1;
-          const total = Object.values(block.counts).reduce((a, b) => a + b, 0);
-          wrapper.querySelector('.survey-status').textContent = `Voted "${choice}" · Total responses: ${total}`;
-          scheduleAutoSave();
-        });
-      });
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${iKey}"]`), editorState.textStyles?.[iKey]);
     } else if (block.type === 'table') {
-      const rows = block.rows || [
-        ['Metric', 'Value', 'Notes'],
-        ['Sample A', '42%', 'Baseline'],
-        ['Sample B', '68%', 'After iteration']
-      ];
-      const trHtml = rows
-        .map(
-          (row, rIdx) => `
-          <tr>
-            ${row
-              .map(
-                (cell, cIdx) =>
-                  `<${rIdx === 0 ? 'th' : 'td'} contenteditable="${isEditMode}" data-row="${rIdx}" data-col="${cIdx}" style="border:1px solid var(--border-color);padding:8px 12px;text-align:left;">${cell}</${rIdx === 0 ? 'th' : 'td'}>`
-              )
-              .join('')}
-          </tr>`
-        )
+      const rows = Array.isArray(block.rows) && block.rows.length
+        ? block.rows
+        : [['Metric', 'Observation', 'Takeaway'], ['Sample', 'Value', 'Note']];
+      const rowsHtml = rows
+        .map((row, rIdx) => {
+          const cellsHtml = row
+            .map((cell) => {
+              const tag = rIdx === 0 ? 'th' : 'td';
+              return `<${tag} contenteditable="${isEditMode}" style="border:1px solid var(--border-color);padding:10px 12px;text-align:left;">${cell}</${tag}>`;
+            })
+            .join('');
+          return `<tr>${cellsHtml}</tr>`;
+        })
         .join('');
       wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <div class="featured-card" style="overflow-x:auto;">
-          <span class="mono">DATA TABLE</span>
-          <table style="width:100%;border-collapse:collapse;margin-top:12px;">${trHtml}</table>
-          ${isEditMode ? `<button type="button" data-add-row="${block.id}" class="studio-card-btn" style="margin-top:10px;">+ Add Row</button>` : ''}
+        ${controlsHtml}
+        <div class="featured-card">
+          <span class="mono">DATA MATRIX</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Comparison Table'}</h3>
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.92rem;">${rowsHtml}</table>
+          </div>
         </div>
       `;
-    } else if (block.type === 'chart') {
-      const canvasId = `chart-canvas-${block.id || idx}`;
-      const labels = (block.labels || ['Q1', 'Q2', 'Q3', 'Q4']).map(String);
-      const values = (block.values || [12, 24, 18, 32]).map(Number);
+    } else if (block.type === 'chart' && typeof Chart !== 'undefined') {
+      const canvasId = `chart-${block.id || idx}`;
       wrapper.innerHTML = `
-        ${removeBtnHtml}
+        ${controlsHtml}
         <div class="featured-card">
-          <span class="mono">DATA CHART</span>
-          <h3 contenteditable="${isEditMode}" data-block-field="chartTitle" style="margin-top:8px;">${block.chartTitle || 'Performance Overview'}</h3>
-          <div style="max-width:680px;margin-top:16px;">
+          <span class="mono">CHART</span>
+          <h3 contenteditable="${isEditMode}" data-block-field="title" style="margin-top:8px;">${block.title || 'Data Chart'}</h3>
+          <div style="position:relative;height:280px;margin-top:14px;">
             <canvas id="${canvasId}"></canvas>
           </div>
         </div>
       `;
-      if (typeof window.Chart === 'function') {
-        const ctx = wrapper.querySelector(`#${canvasId}`);
-        const chart = new window.Chart(ctx, {
+      const canvas = wrapper.querySelector(`#${canvasId}`);
+      if (canvas) {
+        const chart = new Chart(canvas.getContext('2d'), {
           type: block.chartType || 'bar',
           data: {
-            labels,
+            labels: block.labels || ['Q1', 'Q2', 'Q3', 'Q4'],
             datasets: [
               {
-                label: block.chartTitle || 'Series',
-                data: values,
-                backgroundColor: editorState.brand?.accentColor || '#71869A'
+                label: block.datasetLabel || 'Index',
+                data: block.values || [24, 38, 31, 49],
+                backgroundColor: 'rgba(113, 134, 154, 0.45)',
+                borderColor: '#71869A',
+                borderWidth: 1.5
               }
             ]
           },
-          options: { responsive: true }
+          options: { responsive: true, maintainAspectRatio: false }
         });
-        chartInstances.set(block.id, chart);
-      }
-    } else if (block.type === 'references') {
-      const refs = block.references || [
-        { id: 1, citation: 'Kotler, P., & Keller, K. L. (2016). Marketing Management.' }
-      ];
-      wrapper.id = 'references-section';
-      wrapper.innerHTML = `
-        ${removeBtnHtml}
-        <div class="featured-card">
-          <span class="mono">REFERENCES</span>
-          <h3 contenteditable="${isEditMode}" data-block-field="heading" style="margin-top:8px;">${block.heading || 'Sources & References'}</h3>
-          <ol class="ref-list" style="padding-left:20px;display:flex;flex-direction:column;gap:8px;margin-top:12px;">
-            ${refs
-              .map(
-                (r) => `<li data-ref-id="${r.id}" style="padding:4px 6px;border-radius:4px;"><strong>[${r.id}]</strong> <span contenteditable="${isEditMode}" data-ref-text="${r.id}">${r.citation}</span></li>`
-              )
-              .join('')}
-          </ol>
-          ${
-            isEditMode
-              ? `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-                  <input type="text" id="new-ref-input-${block.id}" placeholder="Add citation text..." style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid var(--border-color);">
-                  <button type="button" data-add-ref="${block.id}" class="studio-card-btn">+ Add Reference</button>
-                </div>`
-              : ''
-          }
-        </div>
-      `;
-    }
-
-    wrapper.querySelectorAll('.ref-inline-badge').forEach((badge) => {
-      badge.addEventListener('click', () => {
-        const num = badge.dataset.refNum;
-        const targetLi = document.querySelector(`#references-section [data-ref-id="${num}"]`);
-        if (targetLi) {
-          targetLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          targetLi.style.background = 'var(--mist-blue)';
-          setTimeout(() => {
-            targetLi.style.background = 'transparent';
-          }, 1600);
-        }
-      });
-    });
-
-    if (isEditMode) {
-      wrapper.querySelectorAll('[contenteditable="true"]').forEach((editable) => {
-        const fKey =
-          editable.dataset.styleKey || `block:${block.id}:${editable.dataset.blockField || editable.dataset.refText || 'text'}`;
-        editable.dataset.styleKey = fKey;
-        editable.addEventListener('focus', () => {
-          pushUndoSnapshot();
-          selectEditableElement(editable, fKey);
-        });
-        editable.addEventListener('input', () => {
-          editorState = captureDomState();
-          scheduleAutoSave();
-        });
-      });
-
-      const pdfInput = wrapper.querySelector(`[data-pdf-url="${block.id}"]`);
-      if (pdfInput) {
-        pdfInput.addEventListener('change', (e) => {
-          pushUndoSnapshot();
-          block.pdfUrl = e.target.value.trim();
-          renderDynamicBlocks(editorState.blocks, true);
-          scheduleAutoSave();
-        });
-      }
-
-      const ytUrlInput = wrapper.querySelector(`[data-yt-url="${block.id}"]`);
-      if (ytUrlInput) {
-        ytUrlInput.addEventListener('change', (e) => {
-          pushUndoSnapshot();
-          block.ytUrl = e.target.value.trim();
-          renderDynamicBlocks(editorState.blocks, true);
-          scheduleAutoSave();
-        });
-      }
-
-      const ytAutoplayChk = wrapper.querySelector(`[data-yt-autoplay="${block.id}"]`);
-      if (ytAutoplayChk) {
-        ytAutoplayChk.addEventListener('change', (e) => {
-          pushUndoSnapshot();
-          block.autoplay = e.target.checked;
-          renderDynamicBlocks(editorState.blocks, true);
-          scheduleAutoSave();
-        });
-      }
-
-      const addRefBtn = wrapper.querySelector(`[data-add-ref="${block.id}"]`);
-      if (addRefBtn) {
-        addRefBtn.addEventListener('click', () => {
-          const input = wrapper.querySelector(`#new-ref-input-${block.id}`);
-          const citation = input?.value.trim();
-          if (!citation) return;
-          pushUndoSnapshot();
-          block.references = block.references || [];
-          const nextId = block.references.length + 1;
-          block.references.push({ id: nextId, citation });
-          renderDynamicBlocks(editorState.blocks, true);
-          scheduleAutoSave();
-        });
-      }
-
-      wrapper.querySelectorAll('[data-ref-text]').forEach((refSpan) => {
-        refSpan.addEventListener('input', () => {
-          const rId = Number(refSpan.dataset.refText);
-          const found = (block.references || []).find((r) => r.id === rId);
-          if (found) found.citation = refSpan.innerText.trim();
-          scheduleAutoSave();
-        });
-      });
-
-      const removeBtn = wrapper.querySelector(`[data-remove-block="${block.id}"]`);
-      if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-          pushUndoSnapshot();
-          editorState = captureDomState();
-          editorState.blocks = editorState.blocks.filter((b) => b.id !== block.id);
-          renderDynamicBlocks(editorState.blocks, true);
-          scheduleAutoSave();
-        });
-      }
-
-      const addRowBtn = wrapper.querySelector(`[data-add-row="${block.id}"]`);
-      if (addRowBtn) {
-        addRowBtn.addEventListener('click', () => {
-          pushUndoSnapshot();
-          editorState = captureDomState();
-          const target = editorState.blocks.find((b) => b.id === block.id);
-          if (target) {
-            const colCount = target.rows?.[0]?.length || 3;
-            target.rows = target.rows || [];
-            target.rows.push(Array(colCount).fill('New cell'));
-            renderDynamicBlocks(editorState.blocks, true);
-            scheduleAutoSave();
-          }
-        });
+        chartInstances.set(canvasId, chart);
       }
     }
 
@@ -634,996 +1057,748 @@ function renderDynamicBlocks(blocks, isEditMode) {
   });
 }
 
-function hydrateStateObject(raw) {
-  if (!raw) return;
-  editorState = {
-    meta: {
-      title: raw.meta?.title || (CUSTOM_SLUG ? CUSTOM_SLUG.replace(/[-_]/g, ' ') : getDefaultPageLabel(PAGE_ID)),
-      category: raw.meta?.category || (CUSTOM_SLUG ? 'Parallel Page' : 'Core Page'),
-      parentId: raw.meta?.parentId || ''
+function addBlock(type, templateId = 'two-col-text') {
+  pushUndoSnapshot();
+  editorState.blocks = editorState.blocks || [];
+  const id = `blk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  const templates = {
+    'text-node': { id, type: 'text-node', tag: 'p', content: 'New editorial paragraph — click to edit.' },
+    info: { id, type: 'info', tag: 'INFO // NOTE', title: 'Information Block', infoBody: 'Add detailed context, notes, or references.' },
+    'project-link': {
+      id,
+      type: 'project-link',
+      badge: 'PROJECT LINK',
+      status: 'LIVE // SUPABASE',
+      title: 'Project Entry',
+      summary: 'Moveable project link block synced to Supabase.',
+      url: 'https://marveltang.com'
     },
-    texts: raw.texts || {},
-    textStyles: raw.textStyles || {},
-    colors: raw.colors || {},
-    brand: {
-      logoText: raw.brand?.logoText || 'MARVEL TANG',
-      logoUrl: raw.brand?.logoUrl || '',
-      primaryColor: raw.brand?.primaryColor || '#0F172A',
-      accentColor: raw.brand?.accentColor || '#71869A'
+    carousel: {
+      id,
+      type: 'carousel',
+      title: 'Featured Carousel',
+      activeIndex: 0,
+      slides: [
+        {
+          imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80',
+          caption: 'Slide 1 — Coastal & brand observation'
+        },
+        {
+          imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=80',
+          caption: 'Slide 2 — Strategy & digital craft'
+        }
+      ]
     },
-    images: raw.images || {},
-    backgrounds: raw.backgrounds || {},
-    uploads: raw.uploads || [],
-    blocks: raw.blocks || []
+    template: {
+      id,
+      type: 'template',
+      templateId,
+      heading: 'Structured Layout Template',
+      body: 'Edit copy directly on the canvas.',
+      rightCol: 'Secondary column notes.',
+      imageUrl: ''
+    },
+    divider: { id, type: 'divider' },
+    quote: { id, type: 'quote', quote: 'Strategy starts where assumptions stop.', cite: 'MARVEL TANG // NOTE' },
+    callout: { id, type: 'callout', label: 'TAKEAWAY', title: 'Core Strategic Insight', body: 'Add supporting analysis or next steps here.' },
+    list: { id, type: 'list', title: 'Checklist', items: ['Item one', 'Item two', 'Item three'] },
+    image: { id, type: 'image', url: '', caption: 'Visual highlight caption' },
+    video: { id, type: 'video', title: 'Featured Video', ytUrl: '', autoplay: false },
+    embed: { id, type: 'embed', title: 'Embedded Resource', embedUrl: '' },
+    pdf: { id, type: 'pdf', title: 'Research Report', pdfUrl: '' },
+    author: { id, type: 'author', name: 'Marvel Tang', bio: 'Marketing & Management @ HKUST.', avatarUrl: '' },
+    table: { id, type: 'table', title: 'Benchmark Comparison', rows: [['Criteria', 'Option A', 'Option B'], ['Focus', 'Brand', 'Growth']] },
+    chart: { id, type: 'chart', title: 'Quarterly Index', chartType: 'bar', labels: ['Q1', 'Q2', 'Q3', 'Q4'], values: [28, 36, 42, 54] }
   };
+
+  editorState.blocks.push(templates[type] || templates['text-node']);
+  renderDynamicBlocks(editorState.blocks, true);
+  bindEditableTargets();
+  scheduleAutoSave();
 }
 
-function applyStateToDom(state, isEditMode) {
-  applyBrandToPage(state.brand || {});
+async function saveToSupabase(statusLabel = 'Saved') {
+  const payload = captureDomState();
+  editorState = cloneState(payload);
 
-  Object.entries(state.texts || {}).forEach(([key, html]) => {
-    const el = document.querySelector(`[data-edit-text="${key}"]`);
-    if (el && el.innerHTML !== html) el.innerHTML = html;
-  });
-
-  Object.entries(state.textStyles || {}).forEach(([sKey, st]) => {
-    const el = document.querySelector(`[data-style-key="${sKey}"]`) || document.querySelector(`[data-edit-text="${sKey}"]`);
-    if (el) applyElementStyle(el, st);
-  });
-
-  Object.entries(state.colors || {}).forEach(([cssVar, value]) => {
-    document.documentElement.style.setProperty(cssVar, value);
-    const picker = document.querySelector(`#studio-side-drawer input[data-css-var="${cssVar}"]`);
-    if (picker) picker.value = value;
-  });
-
-  Object.entries(state.images || {}).forEach(([key, url]) => {
-    const img = document.querySelector(`[data-edit-img="${key}"]`);
-    if (img && url) img.src = url;
-  });
-
-  Object.entries(state.backgrounds || {}).forEach(([key, url]) => {
-    const el = document.querySelector(`[data-edit-bg="${key}"]`);
-    if (el && url) {
-      el.style.backgroundImage = `linear-gradient(135deg, rgba(113, 134, 154, 0.4), rgba(201, 216, 229, 0.6)), url('${url}')`;
-    }
-  });
-
-  renderDynamicBlocks(state.blocks || [], isEditMode);
-}
-
-function appendPublishedParallelPagesToRollMenu(rows, isEditMode) {
-  const rollMenu = document.getElementById('site-roll-menu');
-  if (!rollMenu) return;
-
-  const builtIn = new Set(['page:index', 'page:blog', 'page:about', 'page:project', 'main']);
-  rows.forEach((row) => {
-    if (!row.id || !row.id.startsWith('page:') || builtIn.has(row.id)) return;
-    const payload = isEditMode ? (row.draft_content || row.content) : row.content;
-    if (!payload) return;
-
-    const slug = row.id.replace(/^page:/, '');
-    if (rollMenu.querySelector(`a[data-parallel-slug="${slug}"]`)) return;
-
-    const isSub = Boolean(payload.meta?.parentId);
-    const label = payload.meta?.title || slug.replace(/[-_]/g, ' ');
-    const link = document.createElement('a');
-    link.href = getPageTargetUrl(slug, isEditMode);
-    link.dataset.parallelSlug = slug;
-    link.textContent = isSub ? `↳ ${label}` : label;
-    rollMenu.appendChild(link);
-  });
-}
-
-async function loadSavedSiteContent(isEditMode = false) {
-  try {
-    const { data, error } = await supabase
-      .from('site_content')
-      .select('id, content, draft_content, updated_at')
-      .like('id', 'page:%');
-
-    if (error) {
-      console.error('Error loading site_content:', error);
-    }
-
-    if (Array.isArray(data)) {
-      allSitePages = data;
-      appendPublishedParallelPagesToRollMenu(data, isEditMode);
-
-      const record =
-        data.find((row) => row.id === PAGE_ID) ||
-        (PAGE_ID === 'page:index' ? data.find((row) => row.id === 'main') : null);
-
-      if (record) {
-        publishedContentSnapshot = cloneState(record.content || record.draft_content || {});
-        const chosenPayload = isEditMode
-          ? (record.draft_content || record.content)
-          : (record.content || record.draft_content);
-        hydrateStateObject(chosenPayload);
-      }
-    }
-
-    mountParallelPageShellIfNeeded();
-
-    if (isEditMode && (!publishedContentSnapshot || Object.keys(publishedContentSnapshot).length === 0)) {
-      publishedContentSnapshot = captureDomState();
-    }
-
-    const { data: bucketFiles } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 50 });
-    if (Array.isArray(bucketFiles) && bucketFiles.length > 0) {
-      const fromBucket = bucketFiles
-        .filter((f) => f.name && !f.name.startsWith('.'))
-        .map((f) => {
-          const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name);
-          return { name: f.name, url: pub?.publicUrl || '' };
-        })
-        .filter((item) => item.url);
-
-      const merged = [...(editorState.uploads || [])];
-      fromBucket.forEach((bItem) => {
-        if (!merged.some((m) => m.url === bItem.url)) merged.push(bItem);
-      });
-      editorState.uploads = merged;
-    }
-
-    applyStateToDom(editorState, isEditMode);
-  } catch (err) {
-    console.warn('Could not load saved site content:', err);
-  }
-}
-
-async function saveDraftNow() {
   const statusEl = document.getElementById('studio-save-status');
-  editorState = captureDomState();
-  const draftPayload = cloneState(editorState);
-  const livePayload =
-    publishedContentSnapshot && Object.keys(publishedContentSnapshot).length > 0
-      ? cloneState(publishedContentSnapshot)
-      : cloneState(draftPayload);
-
   if (statusEl) statusEl.textContent = 'Saving...';
 
   const { error } = await supabase
-    .from('site_content')
-    .upsert(
-      {
-        id: PAGE_ID,
-        draft_content: draftPayload,
-        content: livePayload,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'id' }
-    );
+    .from('site_pages')
+    .upsert({ page_id: PAGE_ID, payload, updated_at: new Date().toISOString() }, { onConflict: 'page_id' });
 
   if (error) {
-    console.error('Draft save error:', error);
-    if (statusEl) statusEl.textContent = `Error: ${error.message}`;
-  } else if (statusEl) {
-    statusEl.textContent = 'Draft saved';
+    console.error('Save error:', error);
+    if (statusEl) statusEl.textContent = 'Save failed';
+    return false;
   }
-}
 
-async function publishLiveNow() {
-  const statusEl = document.getElementById('studio-save-status');
-  editorState = captureDomState();
-  const payloadContent = cloneState(editorState);
-  publishedContentSnapshot = cloneState(payloadContent);
-
-  if (statusEl) statusEl.textContent = 'Publishing...';
-
-  const { error } = await supabase
-    .from('site_content')
-    .upsert(
-      {
-        id: PAGE_ID,
-        draft_content: payloadContent,
-        content: payloadContent,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'id' }
-    );
-
-  if (error) {
-    console.error('Publish error:', error);
-    if (statusEl) statusEl.textContent = `Error: ${error.message}`;
-  } else if (statusEl) {
-    statusEl.textContent = 'Published';
-  }
+  publishedContentSnapshot = cloneState(payload);
+  if (statusEl) statusEl.textContent = `${statusLabel} ✓`;
+  return true;
 }
 
 function scheduleAutoSave() {
-  const statusEl = document.getElementById('studio-save-status');
-  if (statusEl) statusEl.textContent = 'Draft';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
-    saveDraftNow();
-  }, 1500);
+    saveToSupabase('Draft saved');
+  }, 1400);
 }
 
-async function getAuthenticatedSession() {
-  const { data } = await supabase.auth.getSession();
-  if (data?.session) return data.session;
+async function loadAllSitePages() {
+  const { data } = await supabase.from('site_pages').select('page_id, payload');
+  const defaultIds = ['page:index', 'page:blog', 'page:about', 'page:project'];
+  const map = new Map();
 
-  if (window.location.hash && window.location.hash.includes('access_token')) {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(async () => {
-        const { data: retryData } = await supabase.auth.getSession();
-        resolve(retryData?.session || null);
-      }, 1500);
+  defaultIds.forEach((id) => map.set(id, { page_id: id, payload: {} }));
+  (data || []).forEach((row) => map.set(row.page_id, row));
+  map.set(PAGE_ID, { page_id: PAGE_ID, payload: captureDomState() });
 
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session) {
-          clearTimeout(timeout);
-          subscription.unsubscribe();
-          resolve(session);
-        }
-      });
-    });
-  }
-
-  return null;
+  allSitePages = Array.from(map.values());
 }
 
-function bindRollDownMenu() {
-  const menuBtn = document.getElementById('nav-menu-toggle');
-  const rollMenu = document.getElementById('site-roll-menu');
-  if (!menuBtn || !rollMenu || menuBtn.dataset.bound) return;
-  menuBtn.dataset.bound = 'true';
+async function uploadFileToSupabase(file) {
+  if (!file) return null;
+  const cleanName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  const path = `studio/${cleanName}`;
 
-  menuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const open = rollMenu.classList.toggle('open');
-    menuBtn.setAttribute('aria-expanded', String(open));
+  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
+    cacheControl: '3600',
+    upsert: false
   });
-
-  document.addEventListener('click', (e) => {
-    if (!rollMenu.contains(e.target) && e.target !== menuBtn) {
-      rollMenu.classList.remove('open');
-      menuBtn.setAttribute('aria-expanded', 'false');
-    }
-  });
-}
-
-function mountHorizontalRuler() {
-  const mainEl = document.querySelector('main.content-wrapper');
-  if (!mainEl || document.getElementById('studio-ruler')) return;
-
-  const ruler = document.createElement('div');
-  ruler.id = 'studio-ruler';
-  ruler.setAttribute('aria-hidden', 'true');
-
-  const maxWidth = mainEl.clientWidth || 960;
-  for (let px = 0; px < maxWidth; px += 100) {
-    const label = document.createElement('span');
-    label.style.left = `${px}px`;
-    label.textContent = `${px}px`;
-    ruler.appendChild(label);
+  if (error) {
+    console.error('Upload error:', error);
+    return null;
   }
 
-  mainEl.prepend(ruler);
-}
-
-async function runPageApp() {
-  if (studioInitialized) return;
-  studioInitialized = true;
-
-  bindRollDownMenu();
-
-  const urlParams = new URLSearchParams(window.location.search);
-  const isEditMode = urlParams.get('edit') === 'true';
-
-  await loadSavedSiteContent(isEditMode);
-
-  const themeToggle = document.getElementById('theme-toggle');
-  if (themeToggle && !themeToggle.dataset.bound) {
-    themeToggle.dataset.bound = 'true';
-    themeToggle.addEventListener('click', () => {
-      const html = document.documentElement;
-      const nextTheme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', nextTheme);
-    });
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  const publicUrl = data?.publicUrl || '';
+  if (publicUrl) {
+    pushUndoSnapshot();
+    editorState.uploads = editorState.uploads || [];
+    editorState.uploads.unshift({ name: file.name, url: publicUrl, createdAt: Date.now() });
+    scheduleAutoSave();
   }
-
-  if (isEditMode) {
-    const session = await getAuthenticatedSession();
-    const userEmail = (session?.user?.email || '').toLowerCase().trim();
-
-    if (!session || userEmail !== ADMIN_EMAIL.toLowerCase()) {
-      alert('Unauthorized access. Please log in with your admin account.');
-      window.location.href = '/pages/login.html';
-      return;
-    }
-
-    if (window.location.hash.includes('access_token')) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
-
-    enableWhiteCanvaStudio();
-  }
+  return publicUrl;
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', runPageApp);
-} else {
-  runPageApp();
-}
+function renderDrawerContent() {
+  const drawer = document.getElementById('studio-side-drawer');
+  if (!drawer) return;
 
-function enableWhiteCanvaStudio() {
-  document.body.classList.add('studio-mode', 'studio-drawer-open');
-  mountHorizontalRuler();
-  editorState = captureDomState();
-  undoStack = [cloneState(editorState)];
+  const currentLabel = getPageDisplayTitle(PAGE_ID, editorState);
 
-  const computedStyles = getComputedStyle(document.documentElement);
-  const viewLiveHref = CUSTOM_SLUG ? `?page=${encodeURIComponent(CUSTOM_SLUG)}` : window.location.pathname;
-  const activeTitle = getPageDisplayTitle(PAGE_ID, editorState);
-
-  const topBar = document.createElement('header');
-  topBar.id = 'studio-top-bar';
-  topBar.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;">
-      <strong style="font-size:14px;color:#0F172A;">Studio</strong>
-      <span id="studio-topbar-page" style="font-size:12px;font-weight:600;color:#3730A3;background:#EEF2FF;border:1px solid #C7D2FE;padding:2px 9px;border-radius:999px;">${activeTitle}</span>
-      <button type="button" id="studio-undo-btn" title="Undo" class="studio-card-btn" style="padding:3px 8px;">↶</button>
-      <button type="button" id="studio-redo-btn" title="Redo" class="studio-card-btn" style="padding:3px 8px;">↷</button>
-      <span id="studio-save-status" style="font-size:11px;color:#64748B;">Draft</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;">
-      <button type="button" id="studio-save-draft-btn" class="studio-card-btn">Save Draft</button>
-      <button type="button" id="studio-publish-btn" style="background:#4F46E5;color:#FFFFFF;border:1px solid #4F46E5;border-radius:7px;padding:6px 12px;font-weight:600;font-size:12px;cursor:pointer;">Publish</button>
-      <a href="${viewLiveHref}" class="studio-card-btn" style="text-decoration:none;">View Live</a>
-    </div>
-  `;
-  document.body.appendChild(topBar);
-
-  const formatBar = document.createElement('div');
-  formatBar.id = 'studio-format-bar';
-  formatBar.innerHTML = `
-    <select id="fmt-font-family" title="Font Family">
-      <option value="">Font</option>
-      <option value="'Poppins', sans-serif">Poppins</option>
-      <option value="Helvetica, Arial, sans-serif">Helvetica</option>
-      <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
-      <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
-      <option value="Georgia, serif">Georgia</option>
-    </select>
-    <button type="button" id="fmt-size-dec" title="Decrease Size">-</button>
-    <input type="number" id="fmt-font-size" min="10" max="120" value="18" style="width:52px;text-align:center;" title="Font Size (px)">
-    <button type="button" id="fmt-size-inc" title="Increase Size">+</button>
-    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">A <input type="color" id="fmt-text-color" value="#0F172A"></label>
-    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">Drop <input type="color" id="fmt-drop-color" value="#EEF2FF"></label>
-    <label title="Transparency" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">
-      Opacity
-      <input type="range" id="fmt-opacity" min="5" max="100" value="100" style="width:68px;">
-      <span id="fmt-opacity-val" style="font-size:11px;">100%</span>
-    </label>
-    <button type="button" data-fmt-cmd="bold" title="Bold"><b>B</b></button>
-    <button type="button" data-fmt-cmd="italic" title="Italic"><i>I</i></button>
-    <button type="button" data-fmt-cmd="underline" title="Underline"><u>U</u></button>
-    <button type="button" data-fmt-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
-    <select id="fmt-effect" title="Visual Effect">
-      <option value="none">Effects</option>
-      <option value="shadow">Shadow</option>
-      <option value="neon">Neon</option>
-      <option value="outline">Outline</option>
-    </select>
-    <select id="fmt-animation" title="Animation">
-      <option value="none">Animate</option>
-      <option value="fade-in">Fade In</option>
-      <option value="type">Type</option>
-    </select>
-    <button type="button" id="fmt-embed-ref" title="Embed Reference [#]">+ Ref [#]</button>
-  `;
-  document.body.appendChild(formatBar);
-
-  const pageBar = document.createElement('div');
-  pageBar.id = 'studio-page-bar';
-  document.body.appendChild(pageBar);
-
-  const leftRail = document.createElement('nav');
-  leftRail.id = 'studio-left-rail';
-  leftRail.innerHTML = `
-    <button type="button" class="studio-rail-btn active" data-panel="pages"><span class="studio-rail-glyph">P</span><span>Pages</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="widgets"><span class="studio-rail-glyph">+</span><span>Widgets</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="text"><span class="studio-rail-glyph">T</span><span>Text</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="uploads"><span class="studio-rail-glyph">IMG</span><span>Uploads</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="brand"><span class="studio-rail-glyph">B</span><span>Brand</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="theme"><span class="studio-rail-glyph">UI</span><span>Theme</span></button>
-    <button type="button" class="studio-rail-btn" id="studio-drawer-toggle" title="Toggle Drawer" style="margin-top:auto;"><span class="studio-rail-glyph">&lt;</span><span>Drawer</span></button>
-  `;
-  document.body.appendChild(leftRail);
-
-  const sideDrawer = document.createElement('aside');
-  sideDrawer.id = 'studio-side-drawer';
-  sideDrawer.innerHTML = `
-    <div id="spanel-pages" class="spanel-view">
-      <div class="studio-drawer-header">
-        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-          <span style="font-weight:700;font-size:13px;">Pages</span>
-          <span id="studio-drawer-page-ext" class="studio-active-page-ext">${activeTitle}</span>
-        </div>
-        <button type="button" id="studio-open-new-page-form" class="studio-icon-plus-btn" title="Add New Page">+</button>
-      </div>
-
-      <div id="studio-new-page-box" style="display:none;background:#F8FAFC;border:1px solid #C7D2FE;border-radius:8px;padding:10px;margin-bottom:12px;">
-        <div id="studio-new-page-label" style="font-size:11px;font-weight:700;color:#3730A3;margin-bottom:6px;">NEW PAGE</div>
-        <input type="hidden" id="studio-new-parent-id" value="">
-        <div style="display:flex;flex-direction:column;gap:6px;">
-          <input type="text" id="studio-new-title" placeholder="Page Title (e.g. Field Notes)" style="padding:6px 8px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;font-size:12px;">
-          <input type="text" id="studio-new-slug" placeholder="url-slug (auto-generated if empty)" style="padding:6px 8px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;font-size:12px;">
-          <div style="display:flex;gap:6px;">
-            <button type="button" id="studio-create-page" style="flex:1;padding:6px 10px;background:#4F46E5;color:#fff;border:none;border-radius:6px;font-weight:600;font-size:12px;cursor:pointer;">+ Create</button>
-            <button type="button" id="studio-cancel-new-page" class="studio-card-btn">Cancel</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="pages-tree-list" style="display:flex;flex-direction:column;gap:6px;"></div>
-    </div>
-
-    <div id="spanel-widgets" class="spanel-view" style="display:none;">
-      <div class="studio-drawer-header">
-        <span style="font-weight:700;font-size:13px;">Widgets</span>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <button type="button" data-add-block="divider" class="studio-widget-btn"><span class="studio-widget-icon">—</span><span>Line</span></button>
-        <button type="button" data-add-block="pdf" class="studio-widget-btn"><span class="studio-widget-icon">PDF</span><span>PDF</span></button>
-        <button type="button" data-add-block="author" class="studio-widget-btn"><span class="studio-widget-icon">AU</span><span>Author</span></button>
-        <button type="button" data-add-block="video" class="studio-widget-btn"><span class="studio-widget-icon">YT</span><span>Video</span></button>
-        <button type="button" data-add-block="quiz" class="studio-widget-btn"><span class="studio-widget-icon">?</span><span>Quiz</span></button>
-        <button type="button" data-add-block="survey" class="studio-widget-btn"><span class="studio-widget-icon">PL</span><span>Poll</span></button>
-        <button type="button" data-add-block="table" class="studio-widget-btn"><span class="studio-widget-icon">TB</span><span>Table</span></button>
-        <button type="button" data-add-block="chart" class="studio-widget-btn"><span class="studio-widget-icon">CH</span><span>Chart</span></button>
-        <button type="button" data-add-block="references" class="studio-widget-btn" style="grid-column:span 2;"><span class="studio-widget-icon">REF</span><span>References Section</span></button>
-      </div>
-    </div>
-
-    <div id="spanel-text" class="spanel-view" style="display:none;">
-      <div class="studio-drawer-header">
-        <span style="font-weight:700;font-size:13px;">Text Elements</span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" data-add-text="h1" class="studio-widget-btn" style="font-size:13px;font-weight:700;"><span class="studio-widget-icon">H1</span><span>Add Heading</span></button>
-        <button type="button" data-add-text="h2" class="studio-widget-btn" style="font-size:12px;font-weight:700;"><span class="studio-widget-icon">H2</span><span>Add Subheading</span></button>
-        <button type="button" data-add-text="h3" class="studio-widget-btn" style="font-size:12px;font-weight:600;"><span class="studio-widget-icon">H3</span><span>Add Title</span></button>
-        <button type="button" data-add-text="p" class="studio-widget-btn"><span class="studio-widget-icon">TX</span><span>Add Normal Text</span></button>
-      </div>
-    </div>
-
-    <div id="spanel-uploads" class="spanel-view" style="display:none;">
-      <div class="studio-drawer-header">
-        <span style="font-weight:700;font-size:13px;">Uploads Library</span>
-      </div>
-      <input type="file" id="studio-upload-input" accept="image/*" style="width:100%;font-size:12px;margin-bottom:12px;border:1px solid #CBD5E1;padding:6px;border-radius:6px;background:#fff;">
-      <div id="studio-uploads-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
-    </div>
-
-    <div id="spanel-brand" class="spanel-view" style="display:none;">
-      <div class="studio-drawer-header">
-        <span style="font-weight:700;font-size:13px;">Brand Kit</span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <label style="font-size:12px;font-weight:600;">
-          Brand Logo Text
-          <input type="text" id="brand-logo-text-input" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="width:100%;margin-top:4px;padding:6px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;">
-        </label>
-        <label style="font-size:12px;font-weight:600;">
-          Brand Logo Image URL
-          <input type="text" id="brand-logo-url-input" value="${editorState.brand?.logoUrl || ''}" placeholder="https://..." style="width:100%;margin-top:4px;padding:6px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;">
-        </label>
-        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;">
-          <span>Primary Brand Color</span>
-          <input type="color" id="brand-primary-color" value="${rgbOrHexToHex(editorState.brand?.primaryColor, '#0F172A')}">
-        </label>
-        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;">
-          <span>Accent Brand Color</span>
-          <input type="color" id="brand-accent-color" value="${rgbOrHexToHex(editorState.brand?.accentColor, '#71869A')}">
-        </label>
-      </div>
-    </div>
-
-    <div id="spanel-theme" class="spanel-view" style="display:none;">
-      <div class="studio-drawer-header">
-        <span style="font-weight:700;font-size:13px;">Theme Colors</span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(sideDrawer);
-
-  const buildPageHierarchy = () => {
-    const corePages = [
-      { id: 'page:index', slug: 'index', isCore: true },
-      { id: 'page:blog', slug: 'blog', isCore: true },
-      { id: 'page:about', slug: 'about', isCore: true },
-      { id: 'page:project', slug: 'project', isCore: true }
-    ];
-    const builtInIds = new Set(['page:index', 'page:blog', 'page:about', 'page:project', 'main']);
-
-    const customPages = allSitePages
-      .filter((r) => r.id && r.id.startsWith('page:') && !builtInIds.has(r.id))
-      .map((r) => {
-        const slug = r.id.replace(/^page:/, '');
-        const payload = r.draft_content || r.content || {};
-        return {
-          id: r.id,
-          slug,
-          isCore: false,
-          parentId: payload.meta?.parentId || '',
-          title: getPageDisplayTitle(r.id, payload)
-        };
-      });
-
-    const coreWithTitles = corePages.map((cp) => {
-      const row = allSitePages.find((r) => r.id === cp.id);
-      const payload = row ? (row.draft_content || row.content || {}) : {};
-      return {
-        ...cp,
-        parentId: payload.meta?.parentId || '',
-        title: getPageDisplayTitle(cp.id, payload)
-      };
-    });
-
-    const allNodes = [...coreWithTitles, ...customPages];
-    const topLevel = allNodes.filter((n) => !n.parentId);
-    const childrenByParent = new Map();
-
-    allNodes.forEach((n) => {
-      if (n.parentId) {
-        const arr = childrenByParent.get(n.parentId) || [];
-        arr.push(n);
-        childrenByParent.set(n.parentId, arr);
-      }
-    });
-
-    const ordered = [];
-    topLevel.forEach((parent) => {
-      ordered.push({ ...parent, isSubpage: false });
-      const kids = childrenByParent.get(parent.id) || [];
-      kids.forEach((kid) => ordered.push({ ...kid, isSubpage: true }));
-    });
-
-    // Any subpages whose parent is not top-level
-    allNodes
-      .filter((n) => n.parentId && !topLevel.some((t) => t.id === n.parentId))
-      .forEach((orphan) => ordered.push({ ...orphan, isSubpage: true }));
-
-    return ordered;
-  };
-
-  const renderPagesNavigation = () => {
-    const hierarchy = buildPageHierarchy();
-
-    pageBar.innerHTML =
-      `<span style="font-size:10px;font-weight:700;color:#64748B;letter-spacing:0.04em;margin-right:2px;">PAGES</span>` +
-      hierarchy
-        .map((node) => {
-          const prefix = node.isSubpage ? '↳ ' : '';
-          return `<a href="${getPageTargetUrl(node.slug, true)}" class="studio-page-pill ${node.id === PAGE_ID ? 'active' : ''}">${prefix}${node.title}</a>`;
-        })
-        .join('');
-
-    const treeEl = sideDrawer.querySelector('#pages-tree-list');
-    if (!treeEl) return;
-
-    treeEl.innerHTML = hierarchy
-      .map((node) => {
-        const isCurrent = node.id === PAGE_ID;
+  if (activeDrawerTab === 'pages') {
+    const pageRowsHtml = allSitePages
+      .map((pg) => {
+        const slug = pg.page_id.replace(/^page:/, '');
+        const title = getPageDisplayTitle(pg.page_id, pg.payload);
+        const isCurrent = pg.page_id === PAGE_ID;
+        const isSub = Boolean(pg.payload?.meta?.parentId);
         return `
-          <div class="studio-page-row ${isCurrent ? 'is-current' : ''} ${node.isSubpage ? 'is-subpage' : ''}" data-page-row="${node.id}">
-            <a href="${getPageTargetUrl(node.slug, true)}" class="studio-page-link" title="${node.title}">${node.isSubpage ? '↳ ' : ''}${node.title}</a>
-            <button type="button" class="studio-mini-action" data-rename-page="${node.id}" data-current-title="${node.title}" title="Rename Page">Rename</button>
-            <button type="button" class="studio-mini-action add-sub" data-add-subpage="${node.id}" data-parent-title="${node.title}" title="Add Subpage under ${node.title}">+ Sub</button>
-            ${!node.isCore ? `<button type="button" class="studio-mini-action del" data-delete-page="${node.id}" title="Delete Page">x</button>` : ''}
+          <div class="studio-page-row ${isCurrent ? 'is-current' : ''} ${isSub ? 'is-subpage' : ''}" data-page-id="${pg.page_id}">
+            <a href="${getPageTargetUrl(slug, true)}" class="studio-page-link">${title}</a>
+            <div class="studio-row-actions">
+              <button type="button" class="studio-mini-action" data-rename-page="${pg.page_id}">Rename</button>
+              <button type="button" class="studio-mini-action" data-add-subpage="${pg.page_id}">+ Sub</button>
+            </div>
           </div>
         `;
       })
       .join('');
 
-    treeEl.querySelectorAll('[data-rename-page]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const targetId = btn.dataset.renamePage;
-        const oldTitle = btn.dataset.currentTitle || '';
-        const nextTitle = prompt('Rename page:', oldTitle);
-        if (!nextTitle || !nextTitle.trim()) return;
-        const cleanTitle = nextTitle.trim();
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">${currentLabel}</span>
+        <button type="button" id="studio-new-page-btn" class="studio-icon-plus-btn" title="Create page">+</button>
+      </div>
+      <div id="studio-new-page-form" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--studio-border);border-radius:10px;background:#F9FAFB;">
+        <input type="text" id="studio-new-page-name" placeholder="Page title (e.g. Case Studies)" style="width:100%;padding:7px 9px;border:1px solid #D1D5DB;border-radius:7px;font-size:12px;margin-bottom:8px;">
+        <button type="button" id="studio-create-page-confirm" class="studio-card-btn" style="width:100%;">Create &amp; Open</button>
+      </div>
+      <div style="display:flex;flex-direction:column;">${pageRowsHtml}</div>
+    `;
 
-        if (targetId === PAGE_ID) {
-          editorState.meta = { ...(editorState.meta || {}), title: cleanTitle };
-          const topBadge = document.getElementById('studio-topbar-page');
-          const drawerBadge = document.getElementById('studio-drawer-page-ext');
-          if (topBadge) topBadge.textContent = cleanTitle;
-          if (drawerBadge) drawerBadge.textContent = cleanTitle;
-          await saveDraftNow();
-        } else {
-          const existingRow = allSitePages.find((r) => r.id === targetId);
-          const basePayload = cloneState(existingRow?.draft_content || existingRow?.content || {});
-          basePayload.meta = { ...(basePayload.meta || {}), title: cleanTitle };
-          await supabase.from('site_content').upsert(
-            {
-              id: targetId,
-              draft_content: basePayload,
-              content: existingRow?.content || basePayload,
-              updated_at: new Date().toISOString()
+    drawer.querySelector('#studio-new-page-btn')?.addEventListener('click', () => {
+      const form = drawer.querySelector('#studio-new-page-form');
+      if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    });
+
+    drawer.querySelector('#studio-create-page-confirm')?.addEventListener('click', async () => {
+      const input = drawer.querySelector('#studio-new-page-name');
+      const rawTitle = (input?.value || '').trim();
+      if (!rawTitle) return;
+      const slug = rawTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!slug) return;
+      const newPageId = `page:${slug}`;
+      await supabase.from('site_pages').upsert(
+        {
+          page_id: newPageId,
+          payload: {
+            meta: { title: rawTitle, category: 'Parallel Page', parentId: '' },
+            texts: {
+              'parallel-kicker': 'PARALLEL PAGE',
+              'parallel-title': rawTitle,
+              'parallel-subtitle': 'Start editing text, media, and blocks in Canva Studio.'
             },
-            { onConflict: 'id' }
-          );
-          allSitePages = allSitePages.map((r) =>
-            r.id === targetId ? { ...r, draft_content: basePayload } : r
-          );
-        }
+            blocks: []
+          },
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'page_id' }
+      );
+      window.location.href = `index.html?page=${encodeURIComponent(slug)}&edit=true`;
+    });
 
-        renderPagesNavigation();
+    drawer.querySelectorAll('[data-rename-page]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetPageId = btn.dataset.renamePage;
+        const row = allSitePages.find((p) => p.page_id === targetPageId);
+        const existingTitle = getPageDisplayTitle(targetPageId, row?.payload);
+        const nextTitle = prompt('Rename page:', existingTitle);
+        if (!nextTitle || !nextTitle.trim()) return;
+        const trimmed = nextTitle.trim();
+        const nextPayload = {
+          ...(row?.payload || {}),
+          meta: { ...((row?.payload && row.payload.meta) || {}), title: trimmed }
+        };
+        if (targetPageId === PAGE_ID) {
+          editorState.meta = { ...editorState.meta, title: trimmed };
+        }
+        if (row) row.payload = nextPayload;
+        await supabase.from('site_pages').upsert(
+          { page_id: targetPageId, payload: nextPayload, updated_at: new Date().toISOString() },
+          { onConflict: 'page_id' }
+        );
+        renderDrawerContent();
       });
     });
 
-    treeEl.querySelectorAll('[data-add-subpage]').forEach((btn) => {
-      btn.addEventListener('click', () => {
+    drawer.querySelectorAll('[data-add-subpage]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const parentId = btn.dataset.addSubpage;
-        const parentTitle = btn.dataset.parentTitle || parentId;
-        const box = sideDrawer.querySelector('#studio-new-page-box');
-        const label = sideDrawer.querySelector('#studio-new-page-label');
-        const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
-        const titleInput = sideDrawer.querySelector('#studio-new-title');
-
-        box.style.display = 'block';
-        label.textContent = `NEW SUBPAGE UNDER: ${parentTitle.toUpperCase()}`;
-        parentInput.value = parentId;
-        titleInput.value = '';
-        titleInput.focus();
+        const subTitle = prompt('New subpage title:');
+        if (!subTitle || !subTitle.trim()) return;
+        const trimmed = subTitle.trim();
+        const slug = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        if (!slug) return;
+        const subPageId = `page:${slug}`;
+        await supabase.from('site_pages').upsert(
+          {
+            page_id: subPageId,
+            payload: {
+              meta: { title: trimmed, category: 'Subpage', parentId },
+              texts: {
+                'parallel-kicker': 'SUBPAGE',
+                'parallel-title': trimmed,
+                'parallel-subtitle': `Subpage under ${getDefaultPageLabel(parentId)}.`
+              },
+              blocks: []
+            },
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'page_id' }
+        );
+        await loadAllSitePages();
+        renderDrawerContent();
       });
     });
+  } else if (activeDrawerTab === 'widgets') {
+    const items = [
+      { type: 'text-node', icon: 'T', label: 'Text Block' },
+      { type: 'info', icon: 'INF', label: 'Info Block' },
+      { type: 'carousel', icon: 'SLD', label: 'Carousel' },
+      { type: 'project-link', icon: 'PRJ', label: 'Project Link' },
+      { type: 'callout', icon: 'BOX', label: 'Callout Box' },
+      { type: 'quote', icon: '“”', label: 'Pull Quote' },
+      { type: 'list', icon: '•', label: 'Index List' },
+      { type: 'image', icon: 'IMG', label: 'Image Card' },
+      { type: 'video', icon: 'YT', label: 'YouTube Embed' },
+      { type: 'embed', icon: 'URL', label: 'Web Embed' },
+      { type: 'table', icon: 'TBL', label: 'Comparison Table' },
+      { type: 'chart', icon: 'CHR', label: 'Data Chart' },
+      { type: 'pdf', icon: 'PDF', label: 'PDF Document' },
+      { type: 'author', icon: 'BIO', label: 'Author Box' },
+      { type: 'divider', icon: '—', label: 'Section Divider' }
+    ];
 
-    treeEl.querySelectorAll('[data-delete-page]').forEach((delBtn) => {
-      delBtn.addEventListener('click', async () => {
-        const targetId = delBtn.dataset.deletePage;
-        if (!confirm(`Delete ${targetId}?`)) return;
-        await supabase.from('site_content').delete().eq('id', targetId);
-        allSitePages = allSitePages.filter((p) => p.id !== targetId);
-        if (PAGE_ID === targetId) {
-          window.location.href = getPageTargetUrl('index', true);
-        } else {
-          renderPagesNavigation();
-        }
-      });
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">Blocks &amp; Info</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        ${items
+          .map(
+            (it) => `
+          <button type="button" class="studio-widget-btn" data-add-widget="${it.type}">
+            <span class="studio-widget-icon">${it.icon}</span>
+            <span>${it.label}</span>
+          </button>
+        `
+          )
+          .join('')}
+      </div>
+    `;
+
+    drawer.querySelectorAll('[data-add-widget]').forEach((btn) => {
+      btn.addEventListener('click', () => addBlock(btn.dataset.addWidget));
     });
-  };
-  renderPagesNavigation();
+  } else if (activeDrawerTab === 'templates') {
+    const templateOptions = [
+      { id: 'split-photo', label: 'Split + Image Slot', hasImg: true },
+      { id: 'hero-feature', label: 'Hero + Image Slot', hasImg: true },
+      { id: 'gallery-trio', label: '3-Slot Photo Strip', hasImg: true },
+      { id: 'case-study-split', label: 'Case + Image Slot', hasImg: true },
+      { id: 'two-col-text', label: '2-Col Essay (No Img)', hasImg: false },
+      { id: 'thesis-grid', label: '3-Pillar Grid (No Img)', hasImg: false },
+      { id: 'brief-memo', label: 'Brief Memo (No Img)', hasImg: false },
+      { id: 'index-ledger', label: 'Index Ledger (No Img)', hasImg: false }
+    ];
 
-  sideDrawer.querySelector('#studio-open-new-page-form').addEventListener('click', () => {
-    const box = sideDrawer.querySelector('#studio-new-page-box');
-    const label = sideDrawer.querySelector('#studio-new-page-label');
-    const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
-    const titleInput = sideDrawer.querySelector('#studio-new-title');
-    box.style.display = 'block';
-    label.textContent = 'NEW TOP-LEVEL PAGE';
-    parentInput.value = '';
-    titleInput.value = '';
-    titleInput.focus();
-  });
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">Templates (8)</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${templateOptions
+          .map(
+            (t) => `
+          <button type="button" class="studio-widget-btn" data-add-template="${t.id}">
+            <span class="studio-widget-icon">${t.hasImg ? 'IMG' : 'TXT'}</span>
+            <span>${t.label}</span>
+          </button>
+        `
+          )
+          .join('')}
+      </div>
+    `;
 
-  sideDrawer.querySelector('#studio-cancel-new-page').addEventListener('click', () => {
-    sideDrawer.querySelector('#studio-new-page-box').style.display = 'none';
-  });
-
-  document.querySelectorAll('[data-edit-text]').forEach((el) => {
-    if (isStudioUiNode(el)) return;
-    const sKey = el.dataset.editText;
-    el.dataset.styleKey = sKey;
-    el.contentEditable = 'true';
-    el.style.outline = '1px dashed #64748B';
-    el.style.outlineOffset = '4px';
-
-    el.addEventListener('focus', () => {
-      pushUndoSnapshot();
-      selectEditableElement(el, sKey);
+    drawer.querySelectorAll('[data-add-template]').forEach((btn) => {
+      btn.addEventListener('click', () => addBlock('template', btn.dataset.addTemplate));
     });
-
-    el.addEventListener('input', () => {
-      editorState = captureDomState();
-      scheduleAutoSave();
-    });
-  });
-
-  const patchActiveStyle = (patch) => {
-    if (!activeEditableEl || !activeStyleKey) return;
-    pushUndoSnapshot();
-    const next = { ...(editorState.textStyles[activeStyleKey] || {}), ...patch };
-    editorState.textStyles[activeStyleKey] = next;
-    applyElementStyle(activeEditableEl, next);
-    editorState = captureDomState();
-    scheduleAutoSave();
-  };
-
-  formatBar.querySelector('#fmt-font-family').addEventListener('change', (e) => patchActiveStyle({ fontFamily: e.target.value }));
-  formatBar.querySelector('#fmt-font-size').addEventListener('change', (e) => patchActiveStyle({ fontSize: Number(e.target.value) || 18 }));
-  formatBar.querySelector('#fmt-size-inc').addEventListener('click', () => {
-    const input = formatBar.querySelector('#fmt-font-size');
-    const val = (Number(input.value) || 18) + 2;
-    input.value = val;
-    patchActiveStyle({ fontSize: val });
-  });
-  formatBar.querySelector('#fmt-size-dec').addEventListener('click', () => {
-    const input = formatBar.querySelector('#fmt-font-size');
-    const val = Math.max(10, (Number(input.value) || 18) - 2);
-    input.value = val;
-    patchActiveStyle({ fontSize: val });
-  });
-  formatBar.querySelector('#fmt-text-color').addEventListener('input', (e) => patchActiveStyle({ color: e.target.value }));
-  formatBar.querySelector('#fmt-drop-color').addEventListener('input', (e) => patchActiveStyle({ dropColor: e.target.value }));
-  formatBar.querySelector('#fmt-opacity').addEventListener('input', (e) => {
-    const pct = Number(e.target.value);
-    formatBar.querySelector('#fmt-opacity-val').textContent = `${pct}%`;
-    patchActiveStyle({ opacity: pct / 100 });
-  });
-  formatBar.querySelector('#fmt-effect').addEventListener('change', (e) => patchActiveStyle({ effect: e.target.value }));
-  formatBar.querySelector('#fmt-animation').addEventListener('change', (e) => patchActiveStyle({ animation: e.target.value }));
-
-  formatBar.querySelectorAll('[data-fmt-cmd]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pushUndoSnapshot();
-      document.execCommand(btn.dataset.fmtCmd, false, null);
-      editorState = captureDomState();
-      scheduleAutoSave();
-    });
-  });
-
-  formatBar.querySelector('#fmt-embed-ref').addEventListener('click', () => {
-    if (!activeEditableEl) return;
-    const refNum = prompt('Reference number to embed (e.g. 1):', '1');
-    if (!refNum) return;
-    pushUndoSnapshot();
-    document.execCommand(
-      'insertHTML',
-      false,
-      `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#4F46E5;font-weight:700;">[${refNum}]</sup>&nbsp;`
-    );
-    editorState = captureDomState();
-    scheduleAutoSave();
-  });
-
-  const railBtns = leftRail.querySelectorAll('.studio-rail-btn[data-panel]');
-  const panelViews = sideDrawer.querySelectorAll('.spanel-view');
-  railBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.body.classList.add('studio-drawer-open');
-      railBtns.forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      panelViews.forEach((v) => (v.style.display = 'none'));
-      sideDrawer.querySelector(`#spanel-${btn.dataset.panel}`).style.display = 'block';
-    });
-  });
-
-  leftRail.querySelector('#studio-drawer-toggle').addEventListener('click', () => {
-    document.body.classList.toggle('studio-drawer-open');
-  });
-
-  const updateBrand = (patch) => {
-    pushUndoSnapshot();
-    editorState.brand = { ...(editorState.brand || {}), ...patch };
-    applyBrandToPage(editorState.brand);
-    scheduleAutoSave();
-  };
-
-  sideDrawer.querySelector('#brand-logo-text-input').addEventListener('input', (e) => updateBrand({ logoText: e.target.value }));
-  sideDrawer.querySelector('#brand-logo-url-input').addEventListener('change', (e) => updateBrand({ logoUrl: e.target.value.trim() }));
-  sideDrawer.querySelector('#brand-primary-color').addEventListener('input', (e) => updateBrand({ primaryColor: e.target.value }));
-  sideDrawer.querySelector('#brand-accent-color').addEventListener('input', (e) => updateBrand({ accentColor: e.target.value }));
-
-  sideDrawer.querySelectorAll('[data-add-text]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pushUndoSnapshot();
-      editorState = captureDomState();
-      const tag = btn.dataset.addText;
-      editorState.blocks.push({
-        id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-        type: 'text-node',
-        tag,
-        content: tag === 'p' ? 'New paragraph text...' : `New ${tag.toUpperCase()} heading`
-      });
-      renderDynamicBlocks(editorState.blocks, true);
-      scheduleAutoSave();
-    });
-  });
-
-  sideDrawer.querySelectorAll('[data-add-block]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pushUndoSnapshot();
-      editorState = captureDomState();
-      const bType = btn.dataset.addBlock;
-      const newBlock = { id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`, type: bType };
-
-      if (bType === 'video') {
-        newBlock.ytUrl = prompt('YouTube URL or Video ID:', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || '';
-        newBlock.autoplay = false;
-        newBlock.title = 'Featured Video';
-      } else if (bType === 'pdf') {
-        newBlock.pdfUrl = prompt('PDF URL or Google Drive link:', '') || '';
-        newBlock.title = 'Attached PDF';
-      } else if (bType === 'chart') {
-        const labels = prompt('Chart labels (comma-separated):', 'Jan, Feb, Mar, Apr') || 'Jan, Feb, Mar';
-        const values = prompt('Chart numbers (comma-separated):', '12, 24, 18, 32') || '12, 24, 18';
-        newBlock.labels = labels.split(',').map((s) => s.trim());
-        newBlock.values = values.split(',').map((n) => Number(n.trim()) || 0);
-      }
-
-      editorState.blocks.push(newBlock);
-      renderDynamicBlocks(editorState.blocks, true);
-      scheduleAutoSave();
-    });
-  });
-
-  const renderUploads = () => {
-    const grid = sideDrawer.querySelector('#studio-uploads-grid');
-    if (!grid) return;
-    const list = editorState.uploads || [];
-    if (!list.length) {
-      grid.innerHTML = `<span style="grid-column:span 2;color:#64748B;font-size:12px;">No photos uploaded yet.</span>`;
-      return;
-    }
-    grid.innerHTML = list
+  } else if (activeDrawerTab === 'media') {
+    const uploadsHtml = (editorState.uploads || [])
       .map(
         (u) => `
-      <div style="border:1px solid #CBD5E1;border-radius:8px;padding:4px;text-align:center;background:#F8FAFC;">
-        <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:60px;object-fit:cover;border-radius:6px;display:block;margin-bottom:4px;">
-        <button type="button" data-insert-photo="${u.url}" class="studio-card-btn" style="width:100%;padding:4px;font-size:11px;">Insert</button>
-      </div>`
+        <div style="border:1px solid var(--studio-border);border-radius:8px;padding:8px;margin-bottom:8px;background:#F9FAFB;">
+          <img src="${u.url}" alt="${u.name}" style="width:100%;height:96px;object-fit:cover;border-radius:6px;margin-bottom:6px;">
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="studio-mini-action" data-insert-img="${u.url}">Insert Card</button>
+            <button type="button" class="studio-mini-action" data-set-banner="${u.url}">Set Hero Banner</button>
+          </div>
+        </div>
+      `
       )
       .join('');
 
-    grid.querySelectorAll('[data-insert-photo]').forEach((btn) => {
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">Supabase Media</span>
+      </div>
+      <label class="studio-card-btn" style="display:block;text-align:center;margin-bottom:12px;">
+        Upload Image
+        <input type="file" id="studio-media-upload" accept="image/*" style="display:none;">
+      </label>
+      <div>${uploadsHtml || '<p class="mono">No uploaded assets yet.</p>'}</div>
+    `;
+
+    drawer.querySelector('#studio-media-upload')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const url = await uploadFileToSupabase(file);
+      if (url) renderDrawerContent();
+    });
+
+    drawer.querySelectorAll('[data-insert-img]').forEach((btn) => {
       btn.addEventListener('click', () => {
         pushUndoSnapshot();
+        editorState.blocks = editorState.blocks || [];
         editorState.blocks.push({
-          id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-          type: 'image-block',
-          src: btn.dataset.insertPhoto,
-          caption: 'Uploaded photo'
+          id: `blk_${Date.now()}`,
+          type: 'image',
+          url: btn.dataset.insertImg,
+          caption: 'Uploaded media highlight'
         });
         renderDynamicBlocks(editorState.blocks, true);
+        bindEditableTargets();
         scheduleAutoSave();
       });
     });
-  };
-  renderUploads();
 
-  sideDrawer.querySelector('#studio-upload-input').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const statusEl = topBar.querySelector('#studio-save-status');
-    statusEl.textContent = 'Uploading...';
-
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filePath = `upload-${Date.now()}-${safeName}`;
-    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(filePath, file, { upsert: true });
-    if (error) {
-      statusEl.textContent = `Upload error: ${error.message}`;
-      return;
-    }
-
-    const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(filePath);
-    if (!pub?.publicUrl) return;
-
-    pushUndoSnapshot();
-    editorState.uploads = editorState.uploads || [];
-    editorState.uploads.unshift({ name: safeName, url: pub.publicUrl });
-    editorState.blocks.push({
-      id: `blk_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-      type: 'image-block',
-      src: pub.publicUrl,
-      caption: safeName
+    drawer.querySelectorAll('[data-set-banner]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const banner = document.querySelector('[data-edit-bg="hero-banner"]');
+        const url = btn.dataset.setBanner;
+        pushUndoSnapshot();
+        editorState.backgrounds = editorState.backgrounds || {};
+        editorState.backgrounds['hero-banner'] = url;
+        if (banner) {
+          banner.style.backgroundImage = `linear-gradient(to top, rgba(12, 15, 20, 0.74), rgba(12, 15, 20, 0.18)), url('${url}')`;
+        }
+        scheduleAutoSave();
+      });
     });
-    renderUploads();
-    renderDynamicBlocks(editorState.blocks, true);
-    await saveDraftNow();
-  });
+  } else if (activeDrawerTab === 'theme') {
+    const bgHex = rgbOrHexToHex(editorState.colors?.['--bg-color'] || getComputedStyle(document.body).backgroundColor, '#F5F5F2');
+    const inkHex = rgbOrHexToHex(editorState.colors?.['--text-main'] || getComputedStyle(document.body).color, '#202124');
 
-  sideDrawer.querySelectorAll('input[type="color"][data-css-var]').forEach((input) => {
-    input.addEventListener('input', (e) => {
-      pushUndoSnapshot();
-      document.documentElement.style.setProperty(e.target.dataset.cssVar, e.target.value);
-      editorState.colors[e.target.dataset.cssVar] = e.target.value;
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">Palette &amp; Brand</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;">
+          <span>Canvas Surface</span>
+          <input type="color" data-css-var="--bg-color" value="${bgHex}">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;">
+          <span>Ink / Text</span>
+          <input type="color" data-css-var="--text-main" value="${inkHex}">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
+          <span>Brand Wordmark</span>
+          <input type="text" id="studio-brand-logo-text" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+        </label>
+      </div>
+    `;
+
+    drawer.querySelectorAll('input[type="color"][data-css-var]').forEach((colorInput) => {
+      colorInput.addEventListener('input', () => {
+        pushUndoSnapshot();
+        editorState.colors = editorState.colors || {};
+        editorState.colors[colorInput.dataset.cssVar] = colorInput.value;
+        document.documentElement.style.setProperty(colorInput.dataset.cssVar, colorInput.value);
+        scheduleAutoSave();
+      });
+    });
+
+    drawer.querySelector('#studio-brand-logo-text')?.addEventListener('input', (e) => {
+      editorState.brand = editorState.brand || {};
+      editorState.brand.logoText = e.target.value;
+      applyBrandToPage(editorState.brand);
       scheduleAutoSave();
     });
-  });
+  }
+}
 
-  sideDrawer.querySelector('#studio-create-page').addEventListener('click', async () => {
-    const titleInput = sideDrawer.querySelector('#studio-new-title');
-    const slugInput = sideDrawer.querySelector('#studio-new-slug');
-    const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
+function initMeasureRulerAndMagnet() {
+  const ruler = document.createElement('div');
+  ruler.id = 'studio-ruler-ribbon';
+  for (let px = 0; px <= 1600; px += 100) {
+    const lbl = document.createElement('span');
+    lbl.style.left = `${px}px`;
+    lbl.textContent = `${px}px`;
+    ruler.appendChild(lbl);
+  }
 
-    const title = titleInput.value.trim() || 'Untitled Page';
-    const rawSlug = slugInput.value.trim() || title;
-    const slug = rawSlug
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-_]/g, '');
-    if (!slug) return;
+  const guide = document.createElement('div');
+  guide.id = 'studio-drag-guide';
 
-    const parentId = parentInput.value.trim();
-    const category = parentId ? 'Subpage' : 'Parallel Page';
-    const starter = {
-      meta: { title, category, parentId },
-      texts: {
-        'parallel-kicker': category.toUpperCase(),
-        'parallel-title': title,
-        'parallel-subtitle': 'Add content, widgets, media, or sections below.'
-      },
-      textStyles: {},
-      colors: editorState.colors || {},
-      brand: editorState.brand || {},
-      images: {},
-      backgrounds: {},
-      uploads: editorState.uploads || [],
-      blocks: []
-    };
+  const readout = document.createElement('div');
+  readout.id = 'studio-guide-readout';
 
-    await supabase.from('site_content').upsert(
-      {
-        id: `page:${slug}`,
-        draft_content: starter,
-        content: publishedContentSnapshot || {},
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'id' }
-    );
+  const magnetLine = document.createElement('div');
+  magnetLine.id = 'studio-magnet-line';
 
-    window.location.href = getPageTargetUrl(slug, true);
-  });
+  document.body.append(ruler, guide, readout, magnetLine);
 
-  const handleUndo = () => {
-    if (!undoStack.length) return;
-    redoStack.push(captureDomState());
-    const prev = undoStack.pop();
-    isApplyingHistory = true;
-    editorState = prev;
-    applyStateToDom(editorState, true);
-    isApplyingHistory = false;
-    scheduleAutoSave();
-  };
+  const updateGuideAtClientX = (clientX) => {
+    const rulerRect = ruler.getBoundingClientRect();
+    let x = Math.max(rulerRect.left, Math.min(clientX, window.innerWidth - 4));
+    let snappedLabel = '';
 
-  const handleRedo = () => {
-    if (!redoStack.length) return;
-    undoStack.push(captureDomState());
-    const next = redoStack.pop();
-    isApplyingHistory = true;
-    editorState = next;
-    applyStateToDom(editorState, true);
-    isApplyingHistory = false;
-    scheduleAutoSave();
-  };
+    if (magnetEnabled) {
+      const snapThreshold = 8;
+      const targets = Array.from(
+        document.querySelectorAll('.content-wrapper section, .content-wrapper .featured-card, .content-wrapper h1, .content-wrapper h2, .content-wrapper h3, .content-wrapper p')
+      ).filter((el) => !isStudioUiNode(el));
 
-  topBar.querySelector('#studio-undo-btn').addEventListener('click', handleUndo);
-  topBar.querySelector('#studio-redo-btn').addEventListener('click', handleRedo);
-  topBar.querySelector('#studio-save-draft-btn').addEventListener('click', saveDraftNow);
-  topBar.querySelector('#studio-publish-btn').addEventListener('click', publishLiveNow);
-
-  document.addEventListener(
-    'keydown',
-    (e) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
-        e.preventDefault();
-        handleRedo();
+      for (const el of targets) {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        const snapPoints = [
+          { val: r.left, label: 'LEFT' },
+          { val: r.left + r.width / 2, label: 'CENTER' },
+          { val: r.right, label: 'RIGHT' }
+        ];
+        const hit = snapPoints.find((pt) => Math.abs(pt.val - x) <= snapThreshold);
+        if (hit) {
+          x = hit.val;
+          snappedLabel = ` · SNAP ${hit.label}`;
+          magnetLine.style.left = `${x}px`;
+          magnetLine.classList.add('active');
+          break;
+        }
+        magnetLine.classList.remove('active');
       }
-    },
-    true
-  );
+    } else {
+      magnetLine.classList.remove('active');
+    }
+
+    guide.style.left = `${x}px`;
+    guide.classList.add('active');
+    readout.style.left = `${x}px`;
+    readout.textContent = `${Math.round(x - rulerRect.left)}px${snappedLabel}`;
+    readout.classList.add('active');
+  };
+
+  ruler.addEventListener('mousedown', (e) => {
+    isDraggingGuide = true;
+    updateGuideAtClientX(e.clientX);
+  });
+
+  guide.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    isDraggingGuide = true;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDraggingGuide) return;
+    updateGuideAtClientX(e.clientX);
+  });
+
+  document.addEventListener('mouseup', () => {
+    isDraggingGuide = false;
+  });
 }
 
-function rgbOrHexToHex(colorStr, fallback) {
-  const trimmed = (colorStr || '').trim();
-  if (/^#[0-9A-Fa-f]{6}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (!match) return fallback;
-  const toHex = (n) => Number(n).toString(16).padStart(2, '0');
-  return `#${toHex(match[1])}${toHex(match[2])}${toHex(match[3])}`;
+async function initCanvaStudio() {
+  if (studioInitialized) return;
+  studioInitialized = true;
+
+  document.body.classList.add('studio-mode', 'studio-drawer-open');
+  await loadAllSitePages();
+  pushUndoSnapshot();
+
+  const topBar = document.createElement('div');
+  topBar.id = 'studio-top-bar';
+  topBar.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;">
+      <strong style="font-size:12px;letter-spacing:0.08em;">CANVA STUDIO</strong>
+      <span id="studio-save-status" class="mono" style="font-size:0.68rem;">Ready</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button type="button" id="studio-undo-btn" class="studio-card-btn" title="Undo">Undo</button>
+      <button type="button" id="studio-redo-btn" class="studio-card-btn" title="Redo">Redo</button>
+      <button type="button" id="studio-publish-btn" class="btn btn-primary" style="padding:6px 14px;font-size:12px;">Publish</button>
+      <button type="button" id="studio-exit-btn" class="studio-card-btn">View Live</button>
+    </div>
+  `;
+
+  const formatBar = document.createElement('div');
+  formatBar.id = 'studio-format-bar';
+  formatBar.innerHTML = `
+    <select id="fmt-font-family" title="Font family">
+      <option value="">Default Font</option>
+      <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans</option>
+      <option value="'Poppins', sans-serif">Poppins</option>
+      <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+    </select>
+    <input type="number" id="fmt-font-size" min="11" max="120" value="18" style="width:62px;" title="Font size (px)">
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;">
+      Text <input type="color" id="fmt-text-color" value="#202124">
+    </label>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;">
+      Fill <input type="color" id="fmt-drop-color" value="#EEF2FF">
+    </label>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;">
+      Opacity <input type="range" id="fmt-opacity" min="10" max="100" value="100" style="width:68px;">
+      <span id="fmt-opacity-val">100%</span>
+    </label>
+    <select id="fmt-effect" title="Text style">
+      <option value="none">No Effect</option>
+      <option value="shadow">Shadow</option>
+      <option value="neon">Glow</option>
+      <option value="outline">Outline</option>
+    </select>
+    <select id="fmt-animation" title="Motion">
+      <option value="none">No Motion</option>
+      <option value="fade-in">Fade In</option>
+      <option value="type">Typewriter</option>
+    </select>
+    <button type="button" id="studio-magnet-btn" class="studio-card-btn is-active" title="Toggle magnetic alignment snap">Magnet: ON</button>
+  `;
+
+  const leftRail = document.createElement('aside');
+  leftRail.id = 'studio-left-rail';
+  leftRail.innerHTML = `
+    <button type="button" class="studio-rail-btn active" data-rail-tab="pages">
+      <span class="studio-rail-glyph">P</span>
+      <span>Pages</span>
+    </button>
+    <button type="button" class="studio-rail-btn" data-rail-tab="widgets">
+      <span class="studio-rail-glyph">+</span>
+      <span>Blocks</span>
+    </button>
+    <button type="button" class="studio-rail-btn" data-rail-tab="templates">
+      <span class="studio-rail-glyph">LYT</span>
+      <span>Layouts</span>
+    </button>
+    <button type="button" class="studio-rail-btn" data-rail-tab="media">
+      <span class="studio-rail-glyph">IMG</span>
+      <span>Media</span>
+    </button>
+    <button type="button" class="studio-rail-btn" data-rail-tab="theme">
+      <span class="studio-rail-glyph">◐</span>
+      <span>Brand</span>
+    </button>
+  `;
+
+  const sideDrawer = document.createElement('aside');
+  sideDrawer.id = 'studio-side-drawer';
+
+  document.body.append(topBar, formatBar, leftRail, sideDrawer);
+  initMeasureRulerAndMagnet();
+
+  topBar.querySelector('#studio-undo-btn')?.addEventListener('click', handleUndo);
+  topBar.querySelector('#studio-redo-btn')?.addEventListener('click', handleRedo);
+  topBar.querySelector('#studio-publish-btn')?.addEventListener('click', () => saveToSupabase('Published'));
+  topBar.querySelector('#studio-exit-btn')?.addEventListener('click', () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('edit');
+    window.location.href = url.toString();
+  });
+
+  formatBar.querySelector('#studio-magnet-btn')?.addEventListener('click', (btnEvt) => {
+    magnetEnabled = !magnetEnabled;
+    const btn = btnEvt.currentTarget;
+    btn.textContent = magnetEnabled ? 'Magnet: ON' : 'Magnet: OFF';
+    btn.classList.toggle('is-active', magnetEnabled);
+    if (!magnetEnabled) {
+      document.getElementById('studio-magnet-line')?.classList.remove('active');
+    }
+  });
+
+  formatBar.querySelector('#fmt-font-family')?.addEventListener('change', (e) =>
+    updateSelectedElementStyle({ fontFamily: e.target.value })
+  );
+  formatBar.querySelector('#fmt-font-size')?.addEventListener('change', (e) =>
+    updateSelectedElementStyle({ fontSize: Number(e.target.value) || 18 })
+  );
+  formatBar.querySelector('#fmt-text-color')?.addEventListener('input', (e) =>
+    updateSelectedElementStyle({ color: e.target.value })
+  );
+  formatBar.querySelector('#fmt-drop-color')?.addEventListener('input', (e) =>
+    updateSelectedElementStyle({ dropColor: e.target.value })
+  );
+  formatBar.querySelector('#fmt-opacity')?.addEventListener('input', (e) => {
+    const pct = Number(e.target.value) || 100;
+    const valEl = formatBar.querySelector('#fmt-opacity-val');
+    if (valEl) valEl.textContent = `${pct}%`;
+    updateSelectedElementStyle({ opacity: (pct / 100).toFixed(2) });
+  });
+  formatBar.querySelector('#fmt-effect')?.addEventListener('change', (e) =>
+    updateSelectedElementStyle({ effect: e.target.value })
+  );
+  formatBar.querySelector('#fmt-animation')?.addEventListener('change', (e) =>
+    updateSelectedElementStyle({ animation: e.target.value })
+  );
+
+  leftRail.querySelectorAll('[data-rail-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const clickedTab = btn.dataset.railTab;
+      if (activeDrawerTab === clickedTab && document.body.classList.contains('studio-drawer-open')) {
+        document.body.classList.remove('studio-drawer-open');
+        btn.classList.remove('active');
+        return;
+      }
+      activeDrawerTab = clickedTab;
+      leftRail.querySelectorAll('.studio-rail-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.body.classList.add('studio-drawer-open');
+      renderDrawerContent();
+    });
+  });
+
+  renderDynamicBlocks(editorState.blocks || [], true);
+  bindEditableTargets();
+  renderDrawerContent();
 }
+
+function initMenu() {
+  const menuToggle = document.getElementById('nav-menu-toggle');
+  const rollMenu = document.getElementById('site-roll-menu');
+  if (menuToggle && rollMenu) {
+    menuToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = rollMenu.classList.toggle('open');
+      menuToggle.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!rollMenu.contains(e.target) && !menuToggle.contains(e.target)) {
+        rollMenu.classList.remove('open');
+        menuToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+}
+
+async function hydrateFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('site_pages')
+      .select('payload')
+      .eq('page_id', PAGE_ID)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Supabase fetch notice:', error.message);
+    } else if (data?.payload) {
+      publishedContentSnapshot = cloneState(data.payload);
+      editorState = {
+        ...editorState,
+        ...cloneState(data.payload),
+        meta: { ...editorState.meta, ...(data.payload.meta || {}) },
+        brand: { ...editorState.brand, ...(data.payload.brand || {}) }
+      };
+    }
+
+    mountParallelPageShellIfNeeded();
+    applyBrandToPage(editorState.brand);
+
+    Object.entries(editorState.texts || {}).forEach(([key, htmlVal]) => {
+      const el = document.querySelector(`[data-edit-text="${key}"]`);
+      if (el && !isStudioUiNode(el)) {
+        el.innerHTML = htmlVal;
+      }
+    });
+
+    Object.entries(editorState.textStyles || {}).forEach(([key, st]) => {
+      const el = document.querySelector(`[data-style-key="${key}"], [data-edit-text="${key}"]`);
+      if (el) applyElementStyle(el, st);
+    });
+
+    Object.entries(editorState.colors || {}).forEach(([cssVar, hex]) => {
+      if (cssVar && hex) document.documentElement.style.setProperty(cssVar, hex);
+    });
+
+    Object.entries(editorState.backgrounds || {}).forEach(([bgKey, bgUrl]) => {
+      const bgEl = document.querySelector(`[data-edit-bg="${bgKey}"]`);
+      if (bgEl && bgUrl) {
+        bgEl.style.backgroundImage = `linear-gradient(to top, rgba(12, 15, 20, 0.74), rgba(12, 15, 20, 0.18)), url('${bgUrl}')`;
+      }
+    });
+
+    const isEditMode = new URLSearchParams(window.location.search).get('edit') === 'true';
+    renderDynamicBlocks(editorState.blocks || [], isEditMode);
+
+    if (isEditMode) {
+      await initCanvaStudio();
+    }
+  } catch (err) {
+    console.error('Error loading page payload:', err);
+    renderDynamicBlocks(editorState.blocks || [], false);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initMenu();
+  hydrateFromSupabase();
+});
