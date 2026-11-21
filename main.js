@@ -7,12 +7,15 @@ const STORAGE_BUCKET = 'portfolio-assets';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-function getCurrentPageKey() {
+function getCustomSlugParam() {
   const params = new URLSearchParams(window.location.search);
   const customPage = params.get('page');
-  if (customPage) {
-    return `page:${customPage.toLowerCase().replace(/[^a-z0-9-_]/g, '')}`;
-  }
+  return customPage ? customPage.toLowerCase().replace(/[^a-z0-9-_]/g, '') : '';
+}
+
+function getCurrentPageKey() {
+  const customSlug = getCustomSlugParam();
+  if (customSlug) return `page:${customSlug}`;
 
   const cleanPath = window.location.pathname.replace(/^\/+|\/+$/g, '') || 'index.html';
   const baseName = cleanPath.split('/').pop().replace(/\.html$/i, '') || 'index';
@@ -33,9 +36,30 @@ function getPageTargetUrl(pageSlug, editMode = false) {
   return editMode ? `${base}${sep}edit=true` : base;
 }
 
+function getDefaultPageLabel(pageId) {
+  if (pageId === 'page:index') return 'Home';
+  if (pageId === 'page:blog') return 'Blog';
+  if (pageId === 'page:about') return 'About';
+  if (pageId === 'page:project') return 'Projects';
+  return pageId.replace(/^page:/, '').replace(/[-_]/g, ' ');
+}
+
+function getPageDisplayTitle(pageId, payload = {}) {
+  if (pageId === PAGE_ID && editorState?.meta?.title) return editorState.meta.title;
+  if (payload?.meta?.title) return payload.meta.title;
+  return getDefaultPageLabel(pageId);
+}
+
+const CUSTOM_SLUG = getCustomSlugParam();
 const PAGE_ID = getCurrentPageKey();
 
+let publishedContentSnapshot = {};
 let editorState = {
+  meta: {
+    title: CUSTOM_SLUG ? CUSTOM_SLUG.replace(/[-_]/g, ' ') : getDefaultPageLabel(PAGE_ID),
+    category: CUSTOM_SLUG ? 'Parallel Page' : 'Core Page',
+    parentId: ''
+  },
   texts: {},
   textStyles: {},
   colors: {},
@@ -51,6 +75,7 @@ let editorState = {
   blocks: []
 };
 
+let allSitePages = [];
 let undoStack = [];
 let redoStack = [];
 let autoSaveTimer = null;
@@ -61,7 +86,7 @@ let studioInitialized = false;
 const chartInstances = new Map();
 
 function cloneState(obj) {
-  return JSON.parse(JSON.stringify(obj));
+  return JSON.parse(JSON.stringify(obj || {}));
 }
 
 function isStudioUiNode(el) {
@@ -69,6 +94,7 @@ function isStudioUiNode(el) {
   return Boolean(
     el.closest('#studio-top-bar') ||
       el.closest('#studio-format-bar') ||
+      el.closest('#studio-page-bar') ||
       el.closest('#studio-left-rail') ||
       el.closest('#studio-side-drawer')
   );
@@ -140,6 +166,25 @@ function applyBrandToPage(brand = {}) {
   }
 }
 
+function mountParallelPageShellIfNeeded() {
+  if (!CUSTOM_SLUG) return;
+  const mainEl = document.querySelector('main.content-wrapper');
+  if (!mainEl) return;
+
+  const pageTitle = editorState.meta?.title || CUSTOM_SLUG.replace(/[-_]/g, ' ');
+  const pageCategory = editorState.meta?.category || 'Parallel Page';
+  document.title = `${pageTitle} — Marvel Tang`;
+
+  mainEl.innerHTML = `
+    <div class="page-header">
+      <span class="mono" data-edit-text="parallel-kicker">${pageCategory.toUpperCase()}</span>
+      <h1 data-edit-text="parallel-title">${pageTitle}</h1>
+      <p data-edit-text="parallel-subtitle">Add content, widgets, media, or sections below.</p>
+    </div>
+    <div id="dynamic-blocks-container"></div>
+  `;
+}
+
 function captureDomState() {
   const container = document.getElementById('dynamic-blocks-container');
   const updatedBlocks = (editorState.blocks || []).map((block) => {
@@ -185,6 +230,7 @@ function captureDomState() {
   });
 
   return {
+    meta: cloneState(editorState.meta || {}),
     texts,
     textStyles: cloneState(editorState.textStyles || {}),
     colors,
@@ -224,7 +270,8 @@ function syncFormatBarToElement(el, styleKey) {
   if (!bar || !el) return;
   const st = editorState.textStyles?.[styleKey] || {};
   const computedPx = parseInt(getComputedStyle(el).fontSize, 10) || 18;
-  const currentOpacity = st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(getComputedStyle(el).opacity || 1);
+  const currentOpacity =
+    st.opacity !== undefined && st.opacity !== '' ? Number(st.opacity) : Number(getComputedStyle(el).opacity || 1);
 
   bar.querySelector('#fmt-text-color').value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#0F172A');
   bar.querySelector('#fmt-drop-color').value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
@@ -488,7 +535,8 @@ function renderDynamicBlocks(blocks, isEditMode) {
 
     if (isEditMode) {
       wrapper.querySelectorAll('[contenteditable="true"]').forEach((editable) => {
-        const fKey = editable.dataset.styleKey || `block:${block.id}:${editable.dataset.blockField || editable.dataset.refText || 'text'}`;
+        const fKey =
+          editable.dataset.styleKey || `block:${block.id}:${editable.dataset.blockField || editable.dataset.refText || 'text'}`;
         editable.dataset.styleKey = fKey;
         editable.addEventListener('focus', () => {
           pushUndoSnapshot();
@@ -589,6 +637,11 @@ function renderDynamicBlocks(blocks, isEditMode) {
 function hydrateStateObject(raw) {
   if (!raw) return;
   editorState = {
+    meta: {
+      title: raw.meta?.title || (CUSTOM_SLUG ? CUSTOM_SLUG.replace(/[-_]/g, ' ') : getDefaultPageLabel(PAGE_ID)),
+      category: raw.meta?.category || (CUSTOM_SLUG ? 'Parallel Page' : 'Core Page'),
+      parentId: raw.meta?.parentId || ''
+    },
     texts: raw.texts || {},
     textStyles: raw.textStyles || {},
     colors: raw.colors || {},
@@ -639,27 +692,61 @@ function applyStateToDom(state, isEditMode) {
   renderDynamicBlocks(state.blocks || [], isEditMode);
 }
 
+function appendPublishedParallelPagesToRollMenu(rows, isEditMode) {
+  const rollMenu = document.getElementById('site-roll-menu');
+  if (!rollMenu) return;
+
+  const builtIn = new Set(['page:index', 'page:blog', 'page:about', 'page:project', 'main']);
+  rows.forEach((row) => {
+    if (!row.id || !row.id.startsWith('page:') || builtIn.has(row.id)) return;
+    const payload = isEditMode ? (row.draft_content || row.content) : row.content;
+    if (!payload) return;
+
+    const slug = row.id.replace(/^page:/, '');
+    if (rollMenu.querySelector(`a[data-parallel-slug="${slug}"]`)) return;
+
+    const isSub = Boolean(payload.meta?.parentId);
+    const label = payload.meta?.title || slug.replace(/[-_]/g, ' ');
+    const link = document.createElement('a');
+    link.href = getPageTargetUrl(slug, isEditMode);
+    link.dataset.parallelSlug = slug;
+    link.textContent = isSub ? `↳ ${label}` : label;
+    rollMenu.appendChild(link);
+  });
+}
+
 async function loadSavedSiteContent(isEditMode = false) {
   try {
-    const idsToCheck = PAGE_ID === 'page:index' ? ['page:index', 'main'] : [PAGE_ID];
     const { data, error } = await supabase
       .from('site_content')
       .select('id, content, draft_content, updated_at')
-      .in('id', idsToCheck);
+      .like('id', 'page:%');
 
     if (error) {
       console.error('Error loading site_content:', error);
-      return;
     }
 
-    if (data && data.length > 0) {
-      const record = data.find((row) => row.id === PAGE_ID) || data[0];
-      // Admin in edit mode sees working draft if available; public visitors see published `content`
-      const chosenPayload = isEditMode
-        ? (record.draft_content || record.content)
-        : (record.content || record.draft_content);
+    if (Array.isArray(data)) {
+      allSitePages = data;
+      appendPublishedParallelPagesToRollMenu(data, isEditMode);
 
-      hydrateStateObject(chosenPayload);
+      const record =
+        data.find((row) => row.id === PAGE_ID) ||
+        (PAGE_ID === 'page:index' ? data.find((row) => row.id === 'main') : null);
+
+      if (record) {
+        publishedContentSnapshot = cloneState(record.content || record.draft_content || {});
+        const chosenPayload = isEditMode
+          ? (record.draft_content || record.content)
+          : (record.content || record.draft_content);
+        hydrateStateObject(chosenPayload);
+      }
+    }
+
+    mountParallelPageShellIfNeeded();
+
+    if (isEditMode && (!publishedContentSnapshot || Object.keys(publishedContentSnapshot).length === 0)) {
+      publishedContentSnapshot = captureDomState();
     }
 
     const { data: bucketFiles } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 50 });
@@ -688,16 +775,21 @@ async function loadSavedSiteContent(isEditMode = false) {
 async function saveDraftNow() {
   const statusEl = document.getElementById('studio-save-status');
   editorState = captureDomState();
-  const payloadContent = cloneState(editorState);
+  const draftPayload = cloneState(editorState);
+  const livePayload =
+    publishedContentSnapshot && Object.keys(publishedContentSnapshot).length > 0
+      ? cloneState(publishedContentSnapshot)
+      : cloneState(draftPayload);
 
-  if (statusEl) statusEl.textContent = 'Saving draft...';
+  if (statusEl) statusEl.textContent = 'Saving...';
 
   const { error } = await supabase
     .from('site_content')
     .upsert(
       {
         id: PAGE_ID,
-        draft_content: payloadContent,
+        draft_content: draftPayload,
+        content: livePayload,
         updated_at: new Date().toISOString()
       },
       { onConflict: 'id' }
@@ -705,9 +797,9 @@ async function saveDraftNow() {
 
   if (error) {
     console.error('Draft save error:', error);
-    if (statusEl) statusEl.textContent = `Draft failed: ${error.message}`;
+    if (statusEl) statusEl.textContent = `Error: ${error.message}`;
   } else if (statusEl) {
-    statusEl.textContent = `Draft saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    statusEl.textContent = 'Draft saved';
   }
 }
 
@@ -715,6 +807,7 @@ async function publishLiveNow() {
   const statusEl = document.getElementById('studio-save-status');
   editorState = captureDomState();
   const payloadContent = cloneState(editorState);
+  publishedContentSnapshot = cloneState(payloadContent);
 
   if (statusEl) statusEl.textContent = 'Publishing...';
 
@@ -732,15 +825,15 @@ async function publishLiveNow() {
 
   if (error) {
     console.error('Publish error:', error);
-    if (statusEl) statusEl.textContent = `Publish failed: ${error.message}`;
+    if (statusEl) statusEl.textContent = `Error: ${error.message}`;
   } else if (statusEl) {
-    statusEl.textContent = `Published ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    statusEl.textContent = 'Published';
   }
 }
 
 function scheduleAutoSave() {
   const statusEl = document.getElementById('studio-save-status');
-  if (statusEl) statusEl.textContent = 'Unsaved draft...';
+  if (statusEl) statusEl.textContent = 'Draft';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
     saveDraftNow();
@@ -791,6 +884,25 @@ function bindRollDownMenu() {
   });
 }
 
+function mountHorizontalRuler() {
+  const mainEl = document.querySelector('main.content-wrapper');
+  if (!mainEl || document.getElementById('studio-ruler')) return;
+
+  const ruler = document.createElement('div');
+  ruler.id = 'studio-ruler';
+  ruler.setAttribute('aria-hidden', 'true');
+
+  const maxWidth = mainEl.clientWidth || 960;
+  for (let px = 0; px < maxWidth; px += 100) {
+    const label = document.createElement('span');
+    label.style.left = `${px}px`;
+    label.textContent = `${px}px`;
+    ruler.appendChild(label);
+  }
+
+  mainEl.prepend(ruler);
+}
+
 async function runPageApp() {
   if (studioInitialized) return;
   studioInitialized = true;
@@ -838,25 +950,28 @@ if (document.readyState === 'loading') {
 
 function enableWhiteCanvaStudio() {
   document.body.classList.add('studio-mode', 'studio-drawer-open');
+  mountHorizontalRuler();
   editorState = captureDomState();
   undoStack = [cloneState(editorState)];
 
   const computedStyles = getComputedStyle(document.documentElement);
+  const viewLiveHref = CUSTOM_SLUG ? `?page=${encodeURIComponent(CUSTOM_SLUG)}` : window.location.pathname;
+  const activeTitle = getPageDisplayTitle(PAGE_ID, editorState);
 
   const topBar = document.createElement('header');
   topBar.id = 'studio-top-bar';
   topBar.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;">
-      <strong style="font-size:0.88rem;color:#0F172A;">Studio</strong>
-      <span class="mono" style="font-size:0.74rem;color:#475569;border:1px solid #CBD5E1;padding:2px 6px;border-radius:5px;background:#F8FAFC;">${PAGE_ID}</span>
-      <button type="button" id="studio-undo-btn" title="Undo (Cmd+Z)" class="studio-card-btn" style="padding:4px 8px;">↶</button>
-      <button type="button" id="studio-redo-btn" title="Redo (Cmd+Y)" class="studio-card-btn" style="padding:4px 8px;">↷</button>
-      <span id="studio-save-status" class="mono" style="font-size:0.72rem;color:#334155;">Draft mode</span>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <strong style="font-size:14px;color:#0F172A;">Studio</strong>
+      <span id="studio-topbar-page" style="font-size:12px;font-weight:600;color:#3730A3;background:#EEF2FF;border:1px solid #C7D2FE;padding:2px 9px;border-radius:999px;">${activeTitle}</span>
+      <button type="button" id="studio-undo-btn" title="Undo" class="studio-card-btn" style="padding:3px 8px;">↶</button>
+      <button type="button" id="studio-redo-btn" title="Redo" class="studio-card-btn" style="padding:3px 8px;">↷</button>
+      <span id="studio-save-status" style="font-size:11px;color:#64748B;">Draft</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button type="button" id="studio-save-draft-btn" class="studio-card-btn">Save Draft</button>
-      <button type="button" id="studio-publish-btn" style="background:#0F172A;color:#FFFFFF;border:1px solid #0F172A;border-radius:6px;padding:6px 12px;font-weight:600;font-size:0.76rem;cursor:pointer;">Publish</button>
-      <a href="${window.location.pathname}" class="studio-card-btn" style="text-decoration:none;">View Live</a>
+      <button type="button" id="studio-publish-btn" style="background:#4F46E5;color:#FFFFFF;border:1px solid #4F46E5;border-radius:7px;padding:6px 12px;font-weight:600;font-size:12px;cursor:pointer;">Publish</button>
+      <a href="${viewLiveHref}" class="studio-card-btn" style="text-decoration:none;">View Live</a>
     </div>
   `;
   document.body.appendChild(topBar);
@@ -872,15 +987,15 @@ function enableWhiteCanvaStudio() {
       <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
       <option value="Georgia, serif">Georgia</option>
     </select>
-    <button type="button" id="fmt-size-dec" title="Decrease Size">−</button>
+    <button type="button" id="fmt-size-dec" title="Decrease Size">-</button>
     <input type="number" id="fmt-font-size" min="10" max="120" value="18" style="width:52px;text-align:center;" title="Font Size (px)">
     <button type="button" id="fmt-size-inc" title="Increase Size">+</button>
-    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">A <input type="color" id="fmt-text-color" value="#0F172A"></label>
-    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">Drop <input type="color" id="fmt-drop-color" value="#EEF2FF"></label>
-    <label title="Transparency" style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;">
+    <label title="Text Color" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">A <input type="color" id="fmt-text-color" value="#0F172A"></label>
+    <label title="Drop / Highlight Color" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">Drop <input type="color" id="fmt-drop-color" value="#EEF2FF"></label>
+    <label title="Transparency" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;border:1px solid #CBD5E1;padding:2px 6px;border-radius:6px;background:#fff;">
       Opacity
       <input type="range" id="fmt-opacity" min="5" max="100" value="100" style="width:68px;">
-      <span id="fmt-opacity-val" class="mono" style="font-size:0.7rem;">100%</span>
+      <span id="fmt-opacity-val" style="font-size:11px;">100%</span>
     </label>
     <button type="button" data-fmt-cmd="bold" title="Bold"><b>B</b></button>
     <button type="button" data-fmt-cmd="italic" title="Italic"><i>I</i></button>
@@ -901,86 +1016,106 @@ function enableWhiteCanvaStudio() {
   `;
   document.body.appendChild(formatBar);
 
+  const pageBar = document.createElement('div');
+  pageBar.id = 'studio-page-bar';
+  document.body.appendChild(pageBar);
+
   const leftRail = document.createElement('nav');
   leftRail.id = 'studio-left-rail';
   leftRail.innerHTML = `
-    <button type="button" class="studio-rail-btn active" data-panel="widgets"><span>❖</span><span>Widgets</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="text"><span>T</span><span>Text</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="pages"><span>📄</span><span>Pages</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="uploads"><span>☁</span><span>Uploads</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="brand"><span>★</span><span>Brand</span></button>
-    <button type="button" class="studio-rail-btn" data-panel="theme"><span>◐</span><span>Theme</span></button>
-    <button type="button" class="studio-rail-btn" id="studio-drawer-toggle" title="Toggle Drawer" style="margin-top:auto;"><span>⟨</span><span>Drawer</span></button>
+    <button type="button" class="studio-rail-btn active" data-panel="pages"><span class="studio-rail-glyph">P</span><span>Pages</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="widgets"><span class="studio-rail-glyph">+</span><span>Widgets</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="text"><span class="studio-rail-glyph">T</span><span>Text</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="uploads"><span class="studio-rail-glyph">IMG</span><span>Uploads</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="brand"><span class="studio-rail-glyph">B</span><span>Brand</span></button>
+    <button type="button" class="studio-rail-btn" data-panel="theme"><span class="studio-rail-glyph">UI</span><span>Theme</span></button>
+    <button type="button" class="studio-rail-btn" id="studio-drawer-toggle" title="Toggle Drawer" style="margin-top:auto;"><span class="studio-rail-glyph">&lt;</span><span>Drawer</span></button>
   `;
   document.body.appendChild(leftRail);
 
   const sideDrawer = document.createElement('aside');
   sideDrawer.id = 'studio-side-drawer';
   sideDrawer.innerHTML = `
-    <div id="spanel-widgets" class="spanel-view">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Widgets</div>
+    <div id="spanel-pages" class="spanel-view">
+      <div class="studio-drawer-header">
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+          <span style="font-weight:700;font-size:13px;">Pages</span>
+          <span id="studio-drawer-page-ext" class="studio-active-page-ext">${activeTitle}</span>
+        </div>
+        <button type="button" id="studio-open-new-page-form" class="studio-icon-plus-btn" title="Add New Page">+</button>
+      </div>
+
+      <div id="studio-new-page-box" style="display:none;background:#F8FAFC;border:1px solid #C7D2FE;border-radius:8px;padding:10px;margin-bottom:12px;">
+        <div id="studio-new-page-label" style="font-size:11px;font-weight:700;color:#3730A3;margin-bottom:6px;">NEW PAGE</div>
+        <input type="hidden" id="studio-new-parent-id" value="">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <input type="text" id="studio-new-title" placeholder="Page Title (e.g. Field Notes)" style="padding:6px 8px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;font-size:12px;">
+          <input type="text" id="studio-new-slug" placeholder="url-slug (auto-generated if empty)" style="padding:6px 8px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;font-size:12px;">
+          <div style="display:flex;gap:6px;">
+            <button type="button" id="studio-create-page" style="flex:1;padding:6px 10px;background:#4F46E5;color:#fff;border:none;border-radius:6px;font-weight:600;font-size:12px;cursor:pointer;">+ Create</button>
+            <button type="button" id="studio-cancel-new-page" class="studio-card-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="pages-tree-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
+    <div id="spanel-widgets" class="spanel-view" style="display:none;">
+      <div class="studio-drawer-header">
+        <span style="font-weight:700;font-size:13px;">Widgets</span>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <button type="button" data-add-block="divider" class="studio-widget-btn"><span class="studio-widget-icon">―</span><span>Line</span></button>
-        <button type="button" data-add-block="pdf" class="studio-widget-btn"><span class="studio-widget-icon">📄</span><span>PDF</span></button>
-        <button type="button" data-add-block="author" class="studio-widget-btn"><span class="studio-widget-icon">👤</span><span>Author</span></button>
-        <button type="button" data-add-block="video" class="studio-widget-btn"><span class="studio-widget-icon">▶</span><span>Video</span></button>
-        <button type="button" data-add-block="quiz" class="studio-widget-btn"><span class="studio-widget-icon">❓</span><span>Quiz</span></button>
-        <button type="button" data-add-block="survey" class="studio-widget-btn"><span class="studio-widget-icon">📊</span><span>Poll</span></button>
-        <button type="button" data-add-block="table" class="studio-widget-btn"><span class="studio-widget-icon">▦</span><span>Table</span></button>
-        <button type="button" data-add-block="chart" class="studio-widget-btn"><span class="studio-widget-icon">📈</span><span>Chart</span></button>
-        <button type="button" data-add-block="references" class="studio-widget-btn" style="grid-column:span 2;"><span class="studio-widget-icon">📚</span><span>References Section</span></button>
+        <button type="button" data-add-block="divider" class="studio-widget-btn"><span class="studio-widget-icon">—</span><span>Line</span></button>
+        <button type="button" data-add-block="pdf" class="studio-widget-btn"><span class="studio-widget-icon">PDF</span><span>PDF</span></button>
+        <button type="button" data-add-block="author" class="studio-widget-btn"><span class="studio-widget-icon">AU</span><span>Author</span></button>
+        <button type="button" data-add-block="video" class="studio-widget-btn"><span class="studio-widget-icon">YT</span><span>Video</span></button>
+        <button type="button" data-add-block="quiz" class="studio-widget-btn"><span class="studio-widget-icon">?</span><span>Quiz</span></button>
+        <button type="button" data-add-block="survey" class="studio-widget-btn"><span class="studio-widget-icon">PL</span><span>Poll</span></button>
+        <button type="button" data-add-block="table" class="studio-widget-btn"><span class="studio-widget-icon">TB</span><span>Table</span></button>
+        <button type="button" data-add-block="chart" class="studio-widget-btn"><span class="studio-widget-icon">CH</span><span>Chart</span></button>
+        <button type="button" data-add-block="references" class="studio-widget-btn" style="grid-column:span 2;"><span class="studio-widget-icon">REF</span><span>References Section</span></button>
       </div>
     </div>
 
     <div id="spanel-text" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Text Elements</div>
+      <div class="studio-drawer-header">
+        <span style="font-weight:700;font-size:13px;">Text Elements</span>
+      </div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" data-add-text="h1" class="studio-widget-btn" style="font-size:1.05rem;font-weight:700;"><span class="studio-widget-icon">H1</span><span>Add Heading</span></button>
-        <button type="button" data-add-text="h2" class="studio-widget-btn" style="font-size:0.95rem;font-weight:600;"><span class="studio-widget-icon">H2</span><span>Add Subheading</span></button>
-        <button type="button" data-add-text="h3" class="studio-widget-btn" style="font-weight:600;"><span class="studio-widget-icon">H3</span><span>Add Title</span></button>
-        <button type="button" data-add-text="p" class="studio-widget-btn"><span class="studio-widget-icon">¶</span><span>Add normal text</span></button>
-      </div>
-    </div>
-
-    <div id="spanel-pages" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Switch Page in Editor</div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-        <a href="${getPageTargetUrl('index', true)}" class="studio-card-btn" style="text-decoration:none;">🏠 Home (index)</a>
-        <a href="${getPageTargetUrl('blog', true)}" class="studio-card-btn" style="text-decoration:none;">✍️ Blog</a>
-        <a href="${getPageTargetUrl('about', true)}" class="studio-card-btn" style="text-decoration:none;">ℹ️ About</a>
-        <a href="${getPageTargetUrl('project', true)}" class="studio-card-btn" style="text-decoration:none;">💼 Projects</a>
-      </div>
-      <div style="border-top:1.5px solid #CBD5E1;padding-top:12px;">
-        <div style="font-weight:600;font-size:0.78rem;margin-bottom:6px;">Create Custom Page</div>
-        <div style="display:flex;gap:6px;">
-          <input type="text" id="studio-new-slug" placeholder="page-slug" style="flex:1;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
-          <button type="button" id="studio-create-page" style="padding:6px 10px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;">Go</button>
-        </div>
+        <button type="button" data-add-text="h1" class="studio-widget-btn" style="font-size:13px;font-weight:700;"><span class="studio-widget-icon">H1</span><span>Add Heading</span></button>
+        <button type="button" data-add-text="h2" class="studio-widget-btn" style="font-size:12px;font-weight:700;"><span class="studio-widget-icon">H2</span><span>Add Subheading</span></button>
+        <button type="button" data-add-text="h3" class="studio-widget-btn" style="font-size:12px;font-weight:600;"><span class="studio-widget-icon">H3</span><span>Add Title</span></button>
+        <button type="button" data-add-text="p" class="studio-widget-btn"><span class="studio-widget-icon">TX</span><span>Add Normal Text</span></button>
       </div>
     </div>
 
     <div id="spanel-uploads" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Uploads Library</div>
-      <input type="file" id="studio-upload-input" accept="image/*" style="width:100%;font-size:0.74rem;margin-bottom:12px;border:1px solid #94A3B8;padding:6px;border-radius:6px;background:#fff;">
+      <div class="studio-drawer-header">
+        <span style="font-weight:700;font-size:13px;">Uploads Library</span>
+      </div>
+      <input type="file" id="studio-upload-input" accept="image/*" style="width:100%;font-size:12px;margin-bottom:12px;border:1px solid #CBD5E1;padding:6px;border-radius:6px;background:#fff;">
       <div id="studio-uploads-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
     </div>
 
     <div id="spanel-brand" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Brand Kit</div>
+      <div class="studio-drawer-header">
+        <span style="font-weight:700;font-size:13px;">Brand Kit</span>
+      </div>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <label style="font-size:0.76rem;font-weight:600;">
+        <label style="font-size:12px;font-weight:600;">
           Brand Logo Text
-          <input type="text" id="brand-logo-text-input" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+          <input type="text" id="brand-logo-text-input" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="width:100%;margin-top:4px;padding:6px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;">
         </label>
-        <label style="font-size:0.76rem;font-weight:600;">
+        <label style="font-size:12px;font-weight:600;">
           Brand Logo Image URL
-          <input type="text" id="brand-logo-url-input" value="${editorState.brand?.logoUrl || ''}" placeholder="https://..." style="width:100%;margin-top:4px;padding:6px;border:1px solid #94A3B8;border-radius:6px;background:#fff;color:#0F172A;">
+          <input type="text" id="brand-logo-url-input" value="${editorState.brand?.logoUrl || ''}" placeholder="https://..." style="width:100%;margin-top:4px;padding:6px;border:1px solid #CBD5E1;border-radius:6px;background:#fff;color:#0F172A;">
         </label>
-        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.76rem;font-weight:600;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;">
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;">
           <span>Primary Brand Color</span>
           <input type="color" id="brand-primary-color" value="${rgbOrHexToHex(editorState.brand?.primaryColor, '#0F172A')}">
         </label>
-        <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.76rem;font-weight:600;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;">
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;">
           <span>Accent Brand Color</span>
           <input type="color" id="brand-accent-color" value="${rgbOrHexToHex(editorState.brand?.accentColor, '#71869A')}">
         </label>
@@ -988,16 +1123,193 @@ function enableWhiteCanvaStudio() {
     </div>
 
     <div id="spanel-theme" class="spanel-view" style="display:none;">
-      <div style="font-weight:700;font-size:0.86rem;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #CBD5E1;">Theme Colors</div>
+      <div class="studio-drawer-header">
+        <span style="font-weight:700;font-size:13px;">Theme Colors</span>
+      </div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
-        <label style="display:flex;justify-content:space-between;font-size:0.78rem;border:1px solid #CBD5E1;padding:6px 8px;border-radius:6px;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Background</span><input type="color" data-css-var="--bg-color" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--bg-color'), '#F5F5F2')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Text Main</span><input type="color" data-css-var="--text-main" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--text-main'), '#202124')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Card Surface</span><input type="color" data-css-var="--card-bg" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--card-bg'), '#FFFFFF')}"></label>
+        <label style="display:flex;justify-content:space-between;font-size:12px;border:1px solid #E2E8F0;padding:6px 8px;border-radius:6px;"><span>Accent</span><input type="color" data-css-var="--slate-blue" value="${rgbOrHexToHex(computedStyles.getPropertyValue('--slate-blue'), '#71869A')}"></label>
       </div>
     </div>
   `;
   document.body.appendChild(sideDrawer);
+
+  const buildPageHierarchy = () => {
+    const corePages = [
+      { id: 'page:index', slug: 'index', isCore: true },
+      { id: 'page:blog', slug: 'blog', isCore: true },
+      { id: 'page:about', slug: 'about', isCore: true },
+      { id: 'page:project', slug: 'project', isCore: true }
+    ];
+    const builtInIds = new Set(['page:index', 'page:blog', 'page:about', 'page:project', 'main']);
+
+    const customPages = allSitePages
+      .filter((r) => r.id && r.id.startsWith('page:') && !builtInIds.has(r.id))
+      .map((r) => {
+        const slug = r.id.replace(/^page:/, '');
+        const payload = r.draft_content || r.content || {};
+        return {
+          id: r.id,
+          slug,
+          isCore: false,
+          parentId: payload.meta?.parentId || '',
+          title: getPageDisplayTitle(r.id, payload)
+        };
+      });
+
+    const coreWithTitles = corePages.map((cp) => {
+      const row = allSitePages.find((r) => r.id === cp.id);
+      const payload = row ? (row.draft_content || row.content || {}) : {};
+      return {
+        ...cp,
+        parentId: payload.meta?.parentId || '',
+        title: getPageDisplayTitle(cp.id, payload)
+      };
+    });
+
+    const allNodes = [...coreWithTitles, ...customPages];
+    const topLevel = allNodes.filter((n) => !n.parentId);
+    const childrenByParent = new Map();
+
+    allNodes.forEach((n) => {
+      if (n.parentId) {
+        const arr = childrenByParent.get(n.parentId) || [];
+        arr.push(n);
+        childrenByParent.set(n.parentId, arr);
+      }
+    });
+
+    const ordered = [];
+    topLevel.forEach((parent) => {
+      ordered.push({ ...parent, isSubpage: false });
+      const kids = childrenByParent.get(parent.id) || [];
+      kids.forEach((kid) => ordered.push({ ...kid, isSubpage: true }));
+    });
+
+    // Any subpages whose parent is not top-level
+    allNodes
+      .filter((n) => n.parentId && !topLevel.some((t) => t.id === n.parentId))
+      .forEach((orphan) => ordered.push({ ...orphan, isSubpage: true }));
+
+    return ordered;
+  };
+
+  const renderPagesNavigation = () => {
+    const hierarchy = buildPageHierarchy();
+
+    pageBar.innerHTML =
+      `<span style="font-size:10px;font-weight:700;color:#64748B;letter-spacing:0.04em;margin-right:2px;">PAGES</span>` +
+      hierarchy
+        .map((node) => {
+          const prefix = node.isSubpage ? '↳ ' : '';
+          return `<a href="${getPageTargetUrl(node.slug, true)}" class="studio-page-pill ${node.id === PAGE_ID ? 'active' : ''}">${prefix}${node.title}</a>`;
+        })
+        .join('');
+
+    const treeEl = sideDrawer.querySelector('#pages-tree-list');
+    if (!treeEl) return;
+
+    treeEl.innerHTML = hierarchy
+      .map((node) => {
+        const isCurrent = node.id === PAGE_ID;
+        return `
+          <div class="studio-page-row ${isCurrent ? 'is-current' : ''} ${node.isSubpage ? 'is-subpage' : ''}" data-page-row="${node.id}">
+            <a href="${getPageTargetUrl(node.slug, true)}" class="studio-page-link" title="${node.title}">${node.isSubpage ? '↳ ' : ''}${node.title}</a>
+            <button type="button" class="studio-mini-action" data-rename-page="${node.id}" data-current-title="${node.title}" title="Rename Page">Rename</button>
+            <button type="button" class="studio-mini-action add-sub" data-add-subpage="${node.id}" data-parent-title="${node.title}" title="Add Subpage under ${node.title}">+ Sub</button>
+            ${!node.isCore ? `<button type="button" class="studio-mini-action del" data-delete-page="${node.id}" title="Delete Page">x</button>` : ''}
+          </div>
+        `;
+      })
+      .join('');
+
+    treeEl.querySelectorAll('[data-rename-page]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const targetId = btn.dataset.renamePage;
+        const oldTitle = btn.dataset.currentTitle || '';
+        const nextTitle = prompt('Rename page:', oldTitle);
+        if (!nextTitle || !nextTitle.trim()) return;
+        const cleanTitle = nextTitle.trim();
+
+        if (targetId === PAGE_ID) {
+          editorState.meta = { ...(editorState.meta || {}), title: cleanTitle };
+          const topBadge = document.getElementById('studio-topbar-page');
+          const drawerBadge = document.getElementById('studio-drawer-page-ext');
+          if (topBadge) topBadge.textContent = cleanTitle;
+          if (drawerBadge) drawerBadge.textContent = cleanTitle;
+          await saveDraftNow();
+        } else {
+          const existingRow = allSitePages.find((r) => r.id === targetId);
+          const basePayload = cloneState(existingRow?.draft_content || existingRow?.content || {});
+          basePayload.meta = { ...(basePayload.meta || {}), title: cleanTitle };
+          await supabase.from('site_content').upsert(
+            {
+              id: targetId,
+              draft_content: basePayload,
+              content: existingRow?.content || basePayload,
+              updated_at: new Date().toISOString()
+            },
+            { onConflict: 'id' }
+          );
+          allSitePages = allSitePages.map((r) =>
+            r.id === targetId ? { ...r, draft_content: basePayload } : r
+          );
+        }
+
+        renderPagesNavigation();
+      });
+    });
+
+    treeEl.querySelectorAll('[data-add-subpage]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const parentId = btn.dataset.addSubpage;
+        const parentTitle = btn.dataset.parentTitle || parentId;
+        const box = sideDrawer.querySelector('#studio-new-page-box');
+        const label = sideDrawer.querySelector('#studio-new-page-label');
+        const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
+        const titleInput = sideDrawer.querySelector('#studio-new-title');
+
+        box.style.display = 'block';
+        label.textContent = `NEW SUBPAGE UNDER: ${parentTitle.toUpperCase()}`;
+        parentInput.value = parentId;
+        titleInput.value = '';
+        titleInput.focus();
+      });
+    });
+
+    treeEl.querySelectorAll('[data-delete-page]').forEach((delBtn) => {
+      delBtn.addEventListener('click', async () => {
+        const targetId = delBtn.dataset.deletePage;
+        if (!confirm(`Delete ${targetId}?`)) return;
+        await supabase.from('site_content').delete().eq('id', targetId);
+        allSitePages = allSitePages.filter((p) => p.id !== targetId);
+        if (PAGE_ID === targetId) {
+          window.location.href = getPageTargetUrl('index', true);
+        } else {
+          renderPagesNavigation();
+        }
+      });
+    });
+  };
+  renderPagesNavigation();
+
+  sideDrawer.querySelector('#studio-open-new-page-form').addEventListener('click', () => {
+    const box = sideDrawer.querySelector('#studio-new-page-box');
+    const label = sideDrawer.querySelector('#studio-new-page-label');
+    const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
+    const titleInput = sideDrawer.querySelector('#studio-new-title');
+    box.style.display = 'block';
+    label.textContent = 'NEW TOP-LEVEL PAGE';
+    parentInput.value = '';
+    titleInput.value = '';
+    titleInput.focus();
+  });
+
+  sideDrawer.querySelector('#studio-cancel-new-page').addEventListener('click', () => {
+    sideDrawer.querySelector('#studio-new-page-box').style.display = 'none';
+  });
 
   document.querySelectorAll('[data-edit-text]').forEach((el) => {
     if (isStudioUiNode(el)) return;
@@ -1066,7 +1378,11 @@ function enableWhiteCanvaStudio() {
     const refNum = prompt('Reference number to embed (e.g. 1):', '1');
     if (!refNum) return;
     pushUndoSnapshot();
-    document.execCommand('insertHTML', false, `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#2563EB;font-weight:700;">[${refNum}]</sup>&nbsp;`);
+    document.execCommand(
+      'insertHTML',
+      false,
+      `<sup class="ref-inline-badge mono" data-ref-num="${refNum}" style="cursor:pointer;color:#4F46E5;font-weight:700;">[${refNum}]</sup>&nbsp;`
+    );
     editorState = captureDomState();
     scheduleAutoSave();
   });
@@ -1147,7 +1463,7 @@ function enableWhiteCanvaStudio() {
     if (!grid) return;
     const list = editorState.uploads || [];
     if (!list.length) {
-      grid.innerHTML = `<span class="mono" style="grid-column:span 2;color:#64748B;font-size:0.74rem;">No photos uploaded yet.</span>`;
+      grid.innerHTML = `<span style="grid-column:span 2;color:#64748B;font-size:12px;">No photos uploaded yet.</span>`;
       return;
     }
     grid.innerHTML = list
@@ -1155,7 +1471,7 @@ function enableWhiteCanvaStudio() {
         (u) => `
       <div style="border:1px solid #CBD5E1;border-radius:8px;padding:4px;text-align:center;background:#F8FAFC;">
         <img src="${u.url}" alt="${u.name || 'Upload'}" style="width:100%;height:60px;object-fit:cover;border-radius:6px;display:block;margin-bottom:4px;">
-        <button type="button" data-insert-photo="${u.url}" class="studio-card-btn" style="width:100%;padding:4px;font-size:0.7rem;">Insert</button>
+        <button type="button" data-insert-photo="${u.url}" class="studio-card-btn" style="width:100%;padding:4px;font-size:11px;">Insert</button>
       </div>`
       )
       .join('');
@@ -1217,31 +1533,47 @@ function enableWhiteCanvaStudio() {
   });
 
   sideDrawer.querySelector('#studio-create-page').addEventListener('click', async () => {
-    const slug = sideDrawer.querySelector('#studio-new-slug').value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+    const titleInput = sideDrawer.querySelector('#studio-new-title');
+    const slugInput = sideDrawer.querySelector('#studio-new-slug');
+    const parentInput = sideDrawer.querySelector('#studio-new-parent-id');
+
+    const title = titleInput.value.trim() || 'Untitled Page';
+    const rawSlug = slugInput.value.trim() || title;
+    const slug = rawSlug
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-_]/g, '');
     if (!slug) return;
+
+    const parentId = parentInput.value.trim();
+    const category = parentId ? 'Subpage' : 'Parallel Page';
     const starter = {
-      texts: {},
+      meta: { title, category, parentId },
+      texts: {
+        'parallel-kicker': category.toUpperCase(),
+        'parallel-title': title,
+        'parallel-subtitle': 'Add content, widgets, media, or sections below.'
+      },
       textStyles: {},
       colors: editorState.colors || {},
       brand: editorState.brand || {},
       images: {},
       backgrounds: {},
       uploads: editorState.uploads || [],
-      blocks: [{ id: `blk_${Date.now()}`, type: 'text-node', tag: 'h1', content: slug.toUpperCase() }]
+      blocks: []
     };
+
     await supabase.from('site_content').upsert(
       {
         id: `page:${slug}`,
         draft_content: starter,
-        content: starter,
+        content: publishedContentSnapshot || {},
         updated_at: new Date().toISOString()
       },
       { onConflict: 'id' }
     );
-    const url = new URL(window.location.href);
-    url.searchParams.set('page', slug);
-    url.searchParams.set('edit', 'true');
-    window.location.href = url.toString();
+
+    window.location.href = getPageTargetUrl(slug, true);
   });
 
   const handleUndo = () => {
