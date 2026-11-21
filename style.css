@@ -72,6 +72,12 @@ body {
   align-items: center;
 }
 
+.nav-left-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .brand-logo {
   font-weight: 800;
   font-size: 0.9rem;
@@ -79,12 +85,8 @@ body {
   text-decoration: none;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-.nav-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
 }
 
 .menu-trigger-btn {
@@ -106,11 +108,11 @@ body {
   border-color: var(--text-main);
 }
 
-/* Roll-Down Navigation Drawer */
+/* Left Roll-Down Navigation Drawer */
 .roll-down-menu {
   position: fixed;
   top: 62px;
-  right: max(48px, calc((100% - 1160px) / 2 + 48px));
+  left: max(48px, calc((100% - 1160px) / 2 + 48px));
   width: 228px;
   background: var(--card-bg);
   color: var(--text-main);
@@ -147,6 +149,7 @@ body {
   max-width: 1160px;
   margin: 0 auto;
   padding: 132px 56px 104px 56px;
+  position: relative;
 }
 
 .page-header {
@@ -330,7 +333,6 @@ body {
 }
 
 .featured-card:hover {
-  transform: translateY(-2px);
   border-color: var(--text-main);
 }
 
@@ -516,13 +518,13 @@ body {
   padding-top: 28px;
 }
 
-/* Visual Text Effects */
+/* Visual Text & Box Effects */
 .fx-shadow {
   text-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
 
 .fx-neon {
-  text-shadow: 0 0 8px rgba(147, 175, 199, 0.9), 0 0 22px rgba(113, 134, 154, 0.75);
+  text-shadow: 0 0 8px rgba(147, 175, 199, 0.95), 0 0 22px rgba(113, 134, 154, 0.8);
 }
 
 .fx-outline {
@@ -530,7 +532,19 @@ body {
   color: transparent;
 }
 
-/* Entrance Animations */
+.fx-shake {
+  animation: shakeLoop 2.2s ease-in-out infinite;
+}
+
+@keyframes shakeLoop {
+  0%, 82%, 100% { transform: translate(var(--pos-x, 0px), var(--pos-y, 0px)) rotate(0deg); }
+  85% { transform: translate(calc(var(--pos-x, 0px) - 3px), var(--pos-y, 0px)) rotate(-1deg); }
+  88% { transform: translate(calc(var(--pos-x, 0px) + 3px), var(--pos-y, 0px)) rotate(1deg); }
+  91% { transform: translate(calc(var(--pos-x, 0px) - 2px), var(--pos-y, 0px)) rotate(-0.6deg); }
+  94% { transform: translate(calc(var(--pos-x, 0px) + 2px), var(--pos-y, 0px)) rotate(0.6deg); }
+}
+
+/* Entrance & Continuous Motion */
 @keyframes blockFadeIn {
   from {
     opacity: 0;
@@ -542,8 +556,36 @@ body {
   }
 }
 
+@keyframes pulseSoft {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
+}
+
+@keyframes floatGentle {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes shakeMotion {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
 .anim-fade-in {
   animation: blockFadeIn 0.65s ease forwards;
+}
+
+.anim-pulse {
+  animation: pulseSoft 2.4s ease-in-out infinite;
+}
+
+.anim-float {
+  animation: floatGentle 3s ease-in-out infinite;
+}
+
+.anim-shake {
+  animation: shakeMotion 0.45s ease-in-out infinite;
 }
 
 .anim-type {
@@ -564,7 +606,7 @@ body {
 }
 
 /* ==========================================================================
-   CANVA-STYLE STUDIO WORKSPACE (NO PAGE RIBBON, CONNECTED RULER & MAGNET)
+   CANVA-STYLE STUDIO WORKSPACE
    ========================================================================== */
 body.studio-mode {
   padding-top: 124px !important;
@@ -736,6 +778,67 @@ body.studio-mode.studio-drawer-open #studio-ruler-ribbon {
   display: block;
 }
 
+/* Spatial Guides Overlay (Center, Margin Border, Neighboring Blocks) */
+#studio-spatial-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100001;
+  display: none;
+}
+
+#studio-spatial-overlay.active {
+  display: block;
+}
+
+.studio-guide-v {
+  position: fixed;
+  top: 116px;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
+
+.studio-guide-h {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 1px;
+  pointer-events: none;
+}
+
+.studio-guide-center {
+  border-left: 1px dashed rgba(37, 99, 235, 0.65);
+}
+
+.studio-guide-margin {
+  border-left: 1px dotted rgba(217, 119, 6, 0.75);
+}
+
+.studio-guide-neighbor {
+  border-top: 1px dashed rgba(16, 185, 129, 0.75);
+  border-left: 1px dashed rgba(16, 185, 129, 0.75);
+}
+
+#studio-spatial-badge {
+  position: fixed;
+  bottom: 18px;
+  right: 22px;
+  background: #111827;
+  color: #F9FAFB;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 100007;
+  display: none;
+}
+
+#studio-spatial-badge.active {
+  display: block;
+}
+
 /* Left Icon Rail (Canva Tool Dock) */
 #studio-left-rail {
   position: fixed;
@@ -787,7 +890,7 @@ body.studio-mode.studio-drawer-open #studio-ruler-ribbon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   background: #F3F4F6;
   color: #111827;
@@ -993,8 +1096,50 @@ body.studio-mode.studio-drawer-open #studio-side-drawer {
 .studio-selected-outline {
   outline: 2px solid #2563EB !important;
   outline-offset: 4px;
-  border-radius: 4px;
+  border-radius: 6px;
+  position: relative;
 }
+
+.studio-drag-pill {
+  position: absolute;
+  top: -12px;
+  right: 12px;
+  background: #2563EB;
+  color: #FFFFFF;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: grab;
+  user-select: none;
+  z-index: 25;
+}
+
+.studio-drag-pill:active {
+  cursor: grabbing;
+}
+
+/* 6 Surrounding Box Adjustment Dots */
+.studio-box-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2563EB;
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  z-index: 26;
+  user-select: none;
+}
+
+.studio-dot-tl { top: -5px; left: -5px; cursor: nwse-resize; }
+.studio-dot-tc { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.studio-dot-tr { top: -5px; right: -5px; cursor: nesw-resize; }
+.studio-dot-bl { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.studio-dot-bc { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.studio-dot-br { bottom: -5px; right: -5px; cursor: nwse-resize; }
 
 @media (max-width: 768px) {
   .nav-container,
@@ -1002,6 +1147,10 @@ body.studio-mode.studio-drawer-open #studio-side-drawer {
   .global-footer {
     padding-left: 24px;
     padding-right: 24px;
+  }
+
+  .roll-down-menu {
+    left: 24px;
   }
 
   .footer-container {
@@ -1020,7 +1169,9 @@ body.studio-mode.studio-drawer-open #studio-side-drawer {
   #studio-ruler-ribbon,
   #studio-drag-guide,
   #studio-guide-readout,
-  #studio-magnet-line {
+  #studio-magnet-line,
+  #studio-spatial-overlay,
+  #studio-spatial-badge {
     display: none !important;
   }
 }

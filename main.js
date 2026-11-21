@@ -2,7 +2,6 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 const SUPABASE_URL = 'https://uxawnkddduhhvjhrvijn.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_V8JViisHhHsXnTbx3bbtMw_nknLtOEZ';
-const ADMIN_EMAIL = 'marveltang71@gmail.com';
 const STORAGE_BUCKET = 'portfolio-assets';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -52,6 +51,7 @@ function getPageDisplayTitle(pageId, payload = {}) {
 
 const CUSTOM_SLUG = getCustomSlugParam();
 const PAGE_ID = getCurrentPageKey();
+const LOCAL_DRAFT_KEY = `studio_local_draft_${PAGE_ID}`;
 
 let publishedContentSnapshot = {};
 let editorState = {
@@ -66,6 +66,8 @@ let editorState = {
   brand: {
     logoText: 'MARVEL TANG',
     logoUrl: '',
+    footerLogoText: 'MARVEL TANG',
+    footerLogoUrl: '',
     primaryColor: '#202124',
     accentColor: '#71869A'
   },
@@ -82,10 +84,12 @@ let autoSaveTimer = null;
 let isApplyingHistory = false;
 let activeEditableEl = null;
 let activeStyleKey = null;
+let activeBoxEl = null;
 let activeDrawerTab = 'pages';
 let studioInitialized = false;
 let magnetEnabled = true;
 let isDraggingGuide = false;
+let boxTransformSession = null;
 const chartInstances = new Map();
 
 function cloneState(obj) {
@@ -101,8 +105,12 @@ function isStudioUiNode(el) {
       el.closest('#studio-drag-guide') ||
       el.closest('#studio-guide-readout') ||
       el.closest('#studio-magnet-line') ||
+      el.closest('#studio-spatial-overlay') ||
+      el.closest('#studio-spatial-badge') ||
       el.closest('#studio-left-rail') ||
-      el.closest('#studio-side-drawer')
+      el.closest('#studio-side-drawer') ||
+      el.classList.contains('studio-box-dot') ||
+      el.classList.contains('studio-drag-pill')
   );
 }
 
@@ -147,14 +155,43 @@ function applyElementStyle(el, styleObj = {}) {
     el.style.opacity = String(styleObj.opacity);
   }
 
-  el.classList.remove('fx-shadow', 'fx-neon', 'fx-outline');
+  const x = Number(styleObj.posX || 0);
+  const y = Number(styleObj.posY || 0);
+  el.style.setProperty('--pos-x', `${x}px`);
+  el.style.setProperty('--pos-y', `${y}px`);
+  if (x || y) {
+    el.style.transform = `translate(${x}px, ${y}px)`;
+  } else {
+    el.style.transform = '';
+  }
+
+  if (styleObj.boxWidth) {
+    el.style.width = `${styleObj.boxWidth}px`;
+    el.style.maxWidth = '100%';
+  }
+  if (styleObj.boxHeight) {
+    el.style.minHeight = `${styleObj.boxHeight}px`;
+  }
+
+  el.classList.remove('fx-shadow', 'fx-neon', 'fx-outline', 'fx-shake');
   if (styleObj.effect && styleObj.effect !== 'none') {
     el.classList.add(`fx-${styleObj.effect}`);
   }
 
-  el.classList.remove('anim-fade-in', 'anim-type');
+  el.classList.remove('anim-fade-in', 'anim-type', 'anim-pulse', 'anim-float', 'anim-shake');
   if (styleObj.animation && styleObj.animation !== 'none') {
     el.classList.add(`anim-${styleObj.animation}`);
+  }
+}
+
+function renderBrandSlot(logoEl, logoUrl, logoText, fallbackText) {
+  if (!logoEl || isStudioUiNode(logoEl)) return;
+  const cleanUrl = (logoUrl || '').trim();
+  const cleanText = (logoText || fallbackText || 'MARVEL TANG').trim();
+  if (cleanUrl) {
+    logoEl.innerHTML = `<img src="${cleanUrl}" alt="${cleanText}" style="height:28px;width:auto;max-width:180px;object-fit:contain;vertical-align:middle;">`;
+  } else {
+    logoEl.textContent = cleanText;
   }
 }
 
@@ -166,20 +203,18 @@ function applyBrandToPage(brand = {}) {
   if (brand.accentColor) {
     document.documentElement.style.setProperty('--slate-blue', brand.accentColor);
   }
-  if (brand.logoText) {
-    document.querySelectorAll('.brand-logo').forEach((logoEl) => {
-      if (!isStudioUiNode(logoEl) && !logoEl.querySelector('img')) {
-        logoEl.textContent = brand.logoText;
-      }
-    });
-  }
-  if (brand.logoUrl) {
-    document.querySelectorAll('.brand-logo').forEach((logoEl) => {
-      if (!isStudioUiNode(logoEl)) {
-        logoEl.innerHTML = `<img src="${brand.logoUrl}" alt="${brand.logoText || 'Logo'}" style="height:28px;width:auto;object-fit:contain;vertical-align:middle;">`;
-      }
-    });
-  }
+
+  const topText = brand.logoText || 'MARVEL TANG';
+  const topUrl = brand.logoUrl || '';
+  document.querySelectorAll('.header-brand-logo, .nav-ribbon .brand-logo').forEach((el) => {
+    renderBrandSlot(el, topUrl, topText, 'MARVEL TANG');
+  });
+
+  const footText = brand.footerLogoText !== undefined && brand.footerLogoText !== '' ? brand.footerLogoText : topText;
+  const footUrl = brand.footerLogoUrl !== undefined ? brand.footerLogoUrl : '';
+  document.querySelectorAll('.footer-brand-logo, .global-footer .brand-logo').forEach((el) => {
+    renderBrandSlot(el, footUrl, footText, topText);
+  });
 }
 
 function mountParallelPageShellIfNeeded() {
@@ -314,11 +349,7 @@ function applySnapshotToDom(snapshot) {
   applyBrandToPage(editorState.brand);
   renderDynamicBlocks(editorState.blocks || [], true);
   bindEditableTargets();
-
-  Object.entries(editorState.textStyles || {}).forEach(([key, st]) => {
-    const el = document.querySelector(`[data-style-key="${key}"], [data-edit-text="${key}"]`);
-    if (el) applyElementStyle(el, st);
-  });
+  reapplyAllElementStyles();
 
   isApplyingHistory = false;
   scheduleAutoSave();
@@ -339,6 +370,151 @@ function handleRedo() {
   applySnapshotToDom(next);
 }
 
+function reapplyAllElementStyles() {
+  Object.entries(editorState.textStyles || {}).forEach(([key, st]) => {
+    document.querySelectorAll(`[data-style-key="${key}"], [data-box-key="${key}"], [data-edit-text="${key}"]`).forEach((el) => {
+      if (!isStudioUiNode(el)) applyElementStyle(el, st);
+    });
+  });
+}
+
+function clearBoxHandles() {
+  document.querySelectorAll('.studio-box-dot, .studio-drag-pill').forEach((node) => node.remove());
+  if (activeBoxEl) {
+    activeBoxEl.classList.remove('studio-selected-outline');
+  }
+}
+
+function attachSixDotsAndMovePill(boxEl, boxKey) {
+  clearBoxHandles();
+  activeBoxEl = boxEl;
+  boxEl.classList.add('studio-selected-outline');
+
+  const movePill = document.createElement('span');
+  movePill.className = 'studio-drag-pill';
+  movePill.textContent = 'DRAG BOX';
+  movePill.title = 'Drag to reposition box';
+  movePill.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pushUndoSnapshot();
+    const st = editorState.textStyles?.[boxKey] || {};
+    boxTransformSession = {
+      mode: 'move',
+      el: boxEl,
+      key: boxKey,
+      startX: e.clientX,
+      startY: e.clientY,
+      origPosX: Number(st.posX || 0),
+      origPosY: Number(st.posY || 0)
+    };
+  });
+  boxEl.appendChild(movePill);
+
+  const dots = [
+    { cls: 'studio-dot-tl', handle: 'tl' },
+    { cls: 'studio-dot-tc', handle: 'tc' },
+    { cls: 'studio-dot-tr', handle: 'tr' },
+    { cls: 'studio-dot-bl', handle: 'bl' },
+    { cls: 'studio-dot-bc', handle: 'bc' },
+    { cls: 'studio-dot-br', handle: 'br' }
+  ];
+
+  dots.forEach((d) => {
+    const dot = document.createElement('span');
+    dot.className = `studio-box-dot ${d.cls}`;
+    dot.dataset.handle = d.handle;
+    dot.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      pushUndoSnapshot();
+      const rect = boxEl.getBoundingClientRect();
+      const st = editorState.textStyles?.[boxKey] || {};
+      boxTransformSession = {
+        mode: 'resize',
+        handle: d.handle,
+        el: boxEl,
+        key: boxKey,
+        startX: e.clientX,
+        startY: e.clientY,
+        origWidth: Number(st.boxWidth || rect.width),
+        origHeight: Number(st.boxHeight || rect.height),
+        origPosX: Number(st.posX || 0),
+        origPosY: Number(st.posY || 0)
+      };
+    });
+    boxEl.appendChild(dot);
+  });
+}
+
+function updateSpatialGuidesForBox(boxEl) {
+  const overlay = document.getElementById('studio-spatial-overlay');
+  const badge = document.getElementById('studio-spatial-badge');
+  if (!overlay || !badge || !boxEl) return;
+
+  overlay.innerHTML = '';
+  const r = boxEl.getBoundingClientRect();
+  const contentEl = document.querySelector('.content-wrapper');
+  const cRect = contentEl ? contentEl.getBoundingClientRect() : { left: 0, right: window.innerWidth, width: window.innerWidth };
+  const centerX = cRect.left + cRect.width / 2;
+  const boxCenterX = r.left + r.width / 2;
+
+  // Center guide
+  const centerLine = document.createElement('div');
+  centerLine.className = 'studio-guide-v studio-guide-center';
+  centerLine.style.left = `${centerX}px`;
+  overlay.appendChild(centerLine);
+
+  // Left & Right margin border guides
+  const leftMargin = document.createElement('div');
+  leftMargin.className = 'studio-guide-v studio-guide-margin';
+  leftMargin.style.left = `${cRect.left + 56}px`;
+
+  const rightMargin = document.createElement('div');
+  rightMargin.className = 'studio-guide-v studio-guide-margin';
+  rightMargin.style.left = `${cRect.right - 56}px`;
+  overlay.append(leftMargin, rightMargin);
+
+  // Neighboring blocks contrast lines
+  const neighbors = Array.from(
+    document.querySelectorAll('.content-wrapper .featured-card, .content-wrapper .hero-banner, .content-wrapper section')
+  ).filter((el) => el !== boxEl && !el.contains(boxEl) && !boxEl.contains(el) && !isStudioUiNode(el));
+
+  let nearestGap = null;
+  for (const nb of neighbors) {
+    const nr = nb.getBoundingClientRect();
+    if (nr.width <= 0 || nr.height <= 0) continue;
+    const alignedEdge = Math.abs(nr.left - r.left) < 10 || Math.abs(nr.right - r.right) < 10;
+    const vGap = nr.top >= r.bottom ? nr.top - r.bottom : r.top >= nr.bottom ? r.top - nr.bottom : null;
+
+    if (alignedEdge) {
+      const edgeLine = document.createElement('div');
+      edgeLine.className = 'studio-guide-v studio-guide-neighbor';
+      edgeLine.style.left = `${nr.left}px`;
+      overlay.appendChild(edgeLine);
+    }
+
+    if (vGap !== null && vGap < 220 && (nearestGap === null || vGap < nearestGap)) {
+      nearestGap = Math.round(vGap);
+      const hLine = document.createElement('div');
+      hLine.className = 'studio-guide-h studio-guide-neighbor';
+      hLine.style.top = `${nr.top >= r.bottom ? nr.top : nr.bottom}px`;
+      overlay.appendChild(hLine);
+    }
+  }
+
+  overlay.classList.add('active');
+  const offsetFromCenter = Math.round(boxCenterX - centerX);
+  const gapText = nearestGap !== null ? ` · Gap: ${nearestGap}px` : '';
+  badge.textContent = `Center Δ: ${offsetFromCenter}px · W: ${Math.round(r.width)}px · H: ${Math.round(r.height)}px${gapText}`;
+  badge.classList.add('active');
+}
+
+function hideSpatialGuides() {
+  document.getElementById('studio-spatial-overlay')?.classList.remove('active');
+  document.getElementById('studio-spatial-badge')?.classList.remove('active');
+}
+
 function selectEditableElement(el, styleKey) {
   if (activeEditableEl && activeEditableEl !== el) {
     activeEditableEl.classList.remove('studio-selected-outline');
@@ -348,6 +524,14 @@ function selectEditableElement(el, styleKey) {
   if (el) {
     el.classList.add('studio-selected-outline');
     syncFormatBarToElement(el, styleKey);
+  }
+
+  const boxCandidate = el?.closest('.featured-card, .hero-banner, .dynamic-block') || null;
+  if (boxCandidate && !isStudioUiNode(boxCandidate)) {
+    const boxKey = boxCandidate.dataset.boxKey || `box:${boxCandidate.dataset.blockId || styleKey}`;
+    boxCandidate.dataset.boxKey = boxKey;
+    attachSixDotsAndMovePill(boxCandidate, boxKey);
+    updateSpatialGuidesForBox(boxCandidate);
   }
 }
 
@@ -365,8 +549,6 @@ function syncFormatBarToElement(el, styleKey) {
   const fontSizeInput = bar.querySelector('#fmt-font-size');
   const opacityInput = bar.querySelector('#fmt-opacity');
   const opacityVal = bar.querySelector('#fmt-opacity-val');
-  const effectSelect = bar.querySelector('#fmt-effect');
-  const animationSelect = bar.querySelector('#fmt-animation');
 
   if (textColorInput) textColorInput.value = rgbOrHexToHex(st.color || getComputedStyle(el).color, '#202124');
   if (dropColorInput) dropColorInput.value = rgbOrHexToHex(st.dropColor || '', '#EEF2FF');
@@ -374,8 +556,6 @@ function syncFormatBarToElement(el, styleKey) {
   if (fontSizeInput) fontSizeInput.value = st.fontSize || computedPx;
   if (opacityInput) opacityInput.value = Math.round(currentOpacity * 100);
   if (opacityVal) opacityVal.textContent = `${Math.round(currentOpacity * 100)}%`;
-  if (effectSelect) effectSelect.value = st.effect || 'none';
-  if (animationSelect) animationSelect.value = st.animation || 'none';
 }
 
 function updateSelectedElementStyle(patch) {
@@ -389,6 +569,55 @@ function updateSelectedElementStyle(patch) {
   applyElementStyle(activeEditableEl, editorState.textStyles[activeStyleKey]);
   syncFormatBarToElement(activeEditableEl, activeStyleKey);
   scheduleAutoSave();
+}
+
+async function applyEffectToCurrentPage(effectVal, animationVal) {
+  pushUndoSnapshot();
+  editorState.textStyles = editorState.textStyles || {};
+  const targets = Array.from(
+    document.querySelectorAll('[data-edit-text], .featured-card, .hero-banner, [data-block-field]')
+  ).filter((el) => !isStudioUiNode(el));
+
+  targets.forEach((el, idx) => {
+    const key = el.dataset.styleKey || el.dataset.editText || el.dataset.boxKey || `auto-fx-${idx}`;
+    el.dataset.styleKey = key;
+    const prev = editorState.textStyles[key] || {};
+    const nextStyle = { ...prev };
+    if (effectVal !== undefined) nextStyle.effect = effectVal;
+    if (animationVal !== undefined) nextStyle.animation = animationVal;
+    editorState.textStyles[key] = nextStyle;
+    applyElementStyle(el, nextStyle);
+  });
+
+  if (activeEditableEl && activeStyleKey) {
+    syncFormatBarToElement(activeEditableEl, activeStyleKey);
+  }
+  scheduleAutoSave();
+}
+
+async function applyEffectAcrossAllPages(effectVal, animationVal) {
+  await applyEffectToCurrentPage(effectVal, animationVal);
+  await loadAllSitePages();
+
+  for (const pg of allSitePages) {
+    const payload = cloneState(pg.payload || {});
+    payload.textStyles = payload.textStyles || {};
+    Object.keys(payload.texts || {}).forEach((k) => {
+      payload.textStyles[k] = {
+        ...(payload.textStyles[k] || {}),
+        ...(effectVal !== undefined ? { effect: effectVal } : {}),
+        ...(animationVal !== undefined ? { animation: animationVal } : {})
+      };
+    });
+    if (pg.page_id === PAGE_ID) {
+      payload.textStyles = { ...payload.textStyles, ...(editorState.textStyles || {}) };
+    }
+    await supabase
+      .from('site_pages')
+      .upsert({ page_id: pg.page_id, payload, updated_at: new Date().toISOString() }, { onConflict: 'page_id' });
+  }
+  const statusEl = document.getElementById('studio-save-status');
+  if (statusEl) statusEl.textContent = 'Applied to all pages ✓';
 }
 
 function moveBlockById(id, mode) {
@@ -432,6 +661,21 @@ function bindEditableTargets() {
     el.addEventListener('blur', () => {
       pushUndoSnapshot();
       scheduleAutoSave();
+    });
+  });
+
+  document.querySelectorAll('.featured-card, .hero-banner').forEach((cardEl, i) => {
+    if (isStudioUiNode(cardEl)) return;
+    const bKey = cardEl.dataset.boxKey || `card-box-${i}`;
+    cardEl.dataset.boxKey = bKey;
+    if (editorState.textStyles?.[bKey]) {
+      applyElementStyle(cardEl, editorState.textStyles[bKey]);
+    }
+    cardEl.addEventListener('click', (e) => {
+      if (e.target.closest('[contenteditable="true"], a, button, input')) return;
+      e.stopPropagation();
+      attachSixDotsAndMovePill(cardEl, bKey);
+      updateSpatialGuidesForBox(cardEl);
     });
   });
 
@@ -741,7 +985,6 @@ function renderTemplateHtml(block, isEditMode, styleKeyPrefix) {
     `;
   }
 
-  // Default: two-col-text (No Image)
   return `
     <span class="mono">TEMPLATE // TWO-COLUMN ESSAY (NO IMAGE)</span>
     <h3 contenteditable="${isEditMode}" data-block-field="heading" data-style-key="${hKey}" style="margin-top:8px;">${block.heading || 'Comparative Analysis'}</h3>
@@ -764,6 +1007,8 @@ function renderDynamicBlocks(blocks, isEditMode) {
     const wrapper = document.createElement('section');
     wrapper.className = 'section-block dynamic-block';
     wrapper.dataset.blockId = block.id;
+    const boxKey = `box:${block.id}`;
+    wrapper.dataset.boxKey = boxKey;
 
     const controlsHtml = isEditMode
       ? `<div style="float:right;display:flex;gap:6px;margin-bottom:10px;">
@@ -1053,6 +1298,9 @@ function renderDynamicBlocks(blocks, isEditMode) {
       }
     }
 
+    if (editorState.textStyles?.[boxKey]) {
+      applyElementStyle(wrapper, editorState.textStyles[boxKey]);
+    }
     container.appendChild(wrapper);
   });
 }
@@ -1122,6 +1370,10 @@ async function saveToSupabase(statusLabel = 'Saved') {
   const payload = captureDomState();
   editorState = cloneState(payload);
 
+  try {
+    localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(payload));
+  } catch (_) {}
+
   const statusEl = document.getElementById('studio-save-status');
   if (statusEl) statusEl.textContent = 'Saving...';
 
@@ -1130,8 +1382,8 @@ async function saveToSupabase(statusLabel = 'Saved') {
     .upsert({ page_id: PAGE_ID, payload, updated_at: new Date().toISOString() }, { onConflict: 'page_id' });
 
   if (error) {
-    console.error('Save error:', error);
-    if (statusEl) statusEl.textContent = 'Save failed';
+    console.warn('Supabase write fallback:', error.message);
+    if (statusEl) statusEl.textContent = `${statusLabel} (Local Draft)`;
     return false;
   }
 
@@ -1382,6 +1634,57 @@ function renderDrawerContent() {
     drawer.querySelectorAll('[data-add-template]').forEach((btn) => {
       btn.addEventListener('click', () => addBlock('template', btn.dataset.addTemplate));
     });
+  } else if (activeDrawerTab === 'effects') {
+    const curStyle = (activeStyleKey && editorState.textStyles?.[activeStyleKey]) || {};
+    drawer.innerHTML = `
+      <div class="studio-drawer-header">
+        <span class="studio-active-page-ext">Effects &amp; Motion</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+          <span>Visual Effect</span>
+          <select id="fx-drawer-effect" style="padding:7px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+            <option value="none" ${curStyle.effect === 'none' || !curStyle.effect ? 'selected' : ''}>None</option>
+            <option value="shadow" ${curStyle.effect === 'shadow' ? 'selected' : ''}>Drop Shadow</option>
+            <option value="neon" ${curStyle.effect === 'neon' ? 'selected' : ''}>Soft Glow</option>
+            <option value="outline" ${curStyle.effect === 'outline' ? 'selected' : ''}>Text Outline</option>
+            <option value="shake" ${curStyle.effect === 'shake' ? 'selected' : ''}>Shake</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+          <span>Motion / Animation</span>
+          <select id="fx-drawer-anim" style="padding:7px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+            <option value="none" ${curStyle.animation === 'none' || !curStyle.animation ? 'selected' : ''}>None</option>
+            <option value="fade-in" ${curStyle.animation === 'fade-in' ? 'selected' : ''}>Fade In</option>
+            <option value="pulse" ${curStyle.animation === 'pulse' ? 'selected' : ''}>Pulse</option>
+            <option value="float" ${curStyle.animation === 'float' ? 'selected' : ''}>Float</option>
+            <option value="shake" ${curStyle.animation === 'shake' ? 'selected' : ''}>Shake Loop</option>
+            <option value="type" ${curStyle.animation === 'type' ? 'selected' : ''}>Typewriter</option>
+          </select>
+        </label>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px solid var(--studio-border);">
+          <button type="button" id="fx-apply-page-btn" class="studio-card-btn">Apply to All on This Page</button>
+          <button type="button" id="fx-apply-all-pages-btn" class="studio-card-btn is-active">Apply Across All Pages</button>
+        </div>
+      </div>
+    `;
+
+    drawer.querySelector('#fx-drawer-effect')?.addEventListener('change', (e) => {
+      updateSelectedElementStyle({ effect: e.target.value });
+    });
+    drawer.querySelector('#fx-drawer-anim')?.addEventListener('change', (e) => {
+      updateSelectedElementStyle({ animation: e.target.value });
+    });
+    drawer.querySelector('#fx-apply-page-btn')?.addEventListener('click', () => {
+      const eff = drawer.querySelector('#fx-drawer-effect')?.value;
+      const anim = drawer.querySelector('#fx-drawer-anim')?.value;
+      applyEffectToCurrentPage(eff, anim);
+    });
+    drawer.querySelector('#fx-apply-all-pages-btn')?.addEventListener('click', () => {
+      const eff = drawer.querySelector('#fx-drawer-effect')?.value;
+      const anim = drawer.querySelector('#fx-drawer-anim')?.value;
+      applyEffectAcrossAllPages(eff, anim);
+    });
   } else if (activeDrawerTab === 'media') {
     const uploadsHtml = (editorState.uploads || [])
       .map(
@@ -1450,20 +1753,32 @@ function renderDrawerContent() {
 
     drawer.innerHTML = `
       <div class="studio-drawer-header">
-        <span class="studio-active-page-ext">Palette &amp; Brand</span>
+        <span class="studio-active-page-ext">Logos &amp; Brand</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;">
-        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
+          <span>Top-Left Logo Text</span>
+          <input type="text" id="studio-brand-logo-text" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
+          <span>Top-Left Logo Image URL</span>
+          <input type="text" id="studio-brand-logo-url" value="${editorState.brand?.logoUrl || ''}" placeholder="https://...png/svg" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
+          <span>Footnote Logo Text (Different)</span>
+          <input type="text" id="studio-footer-logo-text" value="${editorState.brand?.footerLogoText || editorState.brand?.logoText || 'MARVEL TANG'}" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
+          <span>Footnote Logo Image URL (Different)</span>
+          <input type="text" id="studio-footer-logo-url" value="${editorState.brand?.footerLogoUrl || ''}" placeholder="https://...png/svg" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;padding-top:6px;border-top:1px solid var(--studio-border);">
           <span>Canvas Surface</span>
           <input type="color" data-css-var="--bg-color" value="${bgHex}">
         </label>
         <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;">
           <span>Ink / Text</span>
           <input type="color" data-css-var="--text-main" value="${inkHex}">
-        </label>
-        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;">
-          <span>Brand Wordmark</span>
-          <input type="text" id="studio-brand-logo-text" value="${editorState.brand?.logoText || 'MARVEL TANG'}" style="padding:6px 8px;border:1px solid #D1D5DB;border-radius:7px;">
         </label>
       </div>
     `;
@@ -1481,6 +1796,24 @@ function renderDrawerContent() {
     drawer.querySelector('#studio-brand-logo-text')?.addEventListener('input', (e) => {
       editorState.brand = editorState.brand || {};
       editorState.brand.logoText = e.target.value;
+      applyBrandToPage(editorState.brand);
+      scheduleAutoSave();
+    });
+    drawer.querySelector('#studio-brand-logo-url')?.addEventListener('input', (e) => {
+      editorState.brand = editorState.brand || {};
+      editorState.brand.logoUrl = e.target.value.trim();
+      applyBrandToPage(editorState.brand);
+      scheduleAutoSave();
+    });
+    drawer.querySelector('#studio-footer-logo-text')?.addEventListener('input', (e) => {
+      editorState.brand = editorState.brand || {};
+      editorState.brand.footerLogoText = e.target.value;
+      applyBrandToPage(editorState.brand);
+      scheduleAutoSave();
+    });
+    drawer.querySelector('#studio-footer-logo-url')?.addEventListener('input', (e) => {
+      editorState.brand = editorState.brand || {};
+      editorState.brand.footerLogoUrl = e.target.value.trim();
       applyBrandToPage(editorState.brand);
       scheduleAutoSave();
     });
@@ -1506,7 +1839,13 @@ function initMeasureRulerAndMagnet() {
   const magnetLine = document.createElement('div');
   magnetLine.id = 'studio-magnet-line';
 
-  document.body.append(ruler, guide, readout, magnetLine);
+  const spatialOverlay = document.createElement('div');
+  spatialOverlay.id = 'studio-spatial-overlay';
+
+  const spatialBadge = document.createElement('div');
+  spatialBadge.id = 'studio-spatial-badge';
+
+  document.body.append(ruler, guide, readout, magnetLine, spatialOverlay, spatialBadge);
 
   const updateGuideAtClientX = (clientX) => {
     const rulerRect = ruler.getBoundingClientRect();
@@ -1559,12 +1898,63 @@ function initMeasureRulerAndMagnet() {
   });
 
   document.addEventListener('mousemove', (e) => {
-    if (!isDraggingGuide) return;
-    updateGuideAtClientX(e.clientX);
+    if (isDraggingGuide) {
+      updateGuideAtClientX(e.clientX);
+      return;
+    }
+    if (boxTransformSession) {
+      const dx = e.clientX - boxTransformSession.startX;
+      const dy = e.clientY - boxTransformSession.startY;
+      editorState.textStyles = editorState.textStyles || {};
+      const current = editorState.textStyles[boxTransformSession.key] || {};
+
+      if (boxTransformSession.mode === 'move') {
+        const nextStyle = {
+          ...current,
+          posX: Math.round(boxTransformSession.origPosX + dx),
+          posY: Math.round(boxTransformSession.origPosY + dy)
+        };
+        editorState.textStyles[boxTransformSession.key] = nextStyle;
+        applyElementStyle(boxTransformSession.el, nextStyle);
+      } else if (boxTransformSession.mode === 'resize') {
+        const h = boxTransformSession.handle;
+        let nextW = boxTransformSession.origWidth;
+        let nextH = boxTransformSession.origHeight;
+        let nextX = boxTransformSession.origPosX;
+        let nextY = boxTransformSession.origPosY;
+
+        if (h.includes('r')) nextW = Math.max(140, boxTransformSession.origWidth + dx);
+        if (h.includes('l')) {
+          nextW = Math.max(140, boxTransformSession.origWidth - dx);
+          nextX = boxTransformSession.origPosX + dx;
+        }
+        if (h.includes('b')) nextH = Math.max(60, boxTransformSession.origHeight + dy);
+        if (h.includes('t')) {
+          nextH = Math.max(60, boxTransformSession.origHeight - dy);
+          nextY = boxTransformSession.origPosY + dy;
+        }
+
+        const nextStyle = {
+          ...current,
+          boxWidth: Math.round(nextW),
+          boxHeight: Math.round(nextH),
+          posX: Math.round(nextX),
+          posY: Math.round(nextY)
+        };
+        editorState.textStyles[boxTransformSession.key] = nextStyle;
+        applyElementStyle(boxTransformSession.el, nextStyle);
+      }
+
+      updateSpatialGuidesForBox(boxTransformSession.el);
+    }
   });
 
   document.addEventListener('mouseup', () => {
     isDraggingGuide = false;
+    if (boxTransformSession) {
+      boxTransformSession = null;
+      scheduleAutoSave();
+    }
   });
 }
 
@@ -1611,17 +2001,6 @@ async function initCanvaStudio() {
       Opacity <input type="range" id="fmt-opacity" min="10" max="100" value="100" style="width:68px;">
       <span id="fmt-opacity-val">100%</span>
     </label>
-    <select id="fmt-effect" title="Text style">
-      <option value="none">No Effect</option>
-      <option value="shadow">Shadow</option>
-      <option value="neon">Glow</option>
-      <option value="outline">Outline</option>
-    </select>
-    <select id="fmt-animation" title="Motion">
-      <option value="none">No Motion</option>
-      <option value="fade-in">Fade In</option>
-      <option value="type">Typewriter</option>
-    </select>
     <button type="button" id="studio-magnet-btn" class="studio-card-btn is-active" title="Toggle magnetic alignment snap">Magnet: ON</button>
   `;
 
@@ -1639,6 +2018,10 @@ async function initCanvaStudio() {
     <button type="button" class="studio-rail-btn" data-rail-tab="templates">
       <span class="studio-rail-glyph">LYT</span>
       <span>Layouts</span>
+    </button>
+    <button type="button" class="studio-rail-btn" data-rail-tab="effects">
+      <span class="studio-rail-glyph">FX</span>
+      <span>Effects</span>
     </button>
     <button type="button" class="studio-rail-btn" data-rail-tab="media">
       <span class="studio-rail-glyph">IMG</span>
@@ -1693,12 +2076,6 @@ async function initCanvaStudio() {
     if (valEl) valEl.textContent = `${pct}%`;
     updateSelectedElementStyle({ opacity: (pct / 100).toFixed(2) });
   });
-  formatBar.querySelector('#fmt-effect')?.addEventListener('change', (e) =>
-    updateSelectedElementStyle({ effect: e.target.value })
-  );
-  formatBar.querySelector('#fmt-animation')?.addEventListener('change', (e) =>
-    updateSelectedElementStyle({ animation: e.target.value })
-  );
 
   leftRail.querySelectorAll('[data-rail-tab]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1716,8 +2093,17 @@ async function initCanvaStudio() {
     });
   });
 
+  document.addEventListener('click', (e) => {
+    if (isStudioUiNode(e.target)) return;
+    if (!e.target.closest('.featured-card, .hero-banner, .dynamic-block, [data-edit-text]')) {
+      clearBoxHandles();
+      hideSpatialGuides();
+    }
+  });
+
   renderDynamicBlocks(editorState.blocks || [], true);
   bindEditableTargets();
+  reapplyAllElementStyles();
   renderDrawerContent();
 }
 
@@ -1742,6 +2128,12 @@ function initMenu() {
 
 async function hydrateFromSupabase() {
   try {
+    let loadedPayload = null;
+    try {
+      const localRaw = localStorage.getItem(LOCAL_DRAFT_KEY);
+      if (localRaw) loadedPayload = JSON.parse(localRaw);
+    } catch (_) {}
+
     const { data, error } = await supabase
       .from('site_pages')
       .select('payload')
@@ -1752,11 +2144,15 @@ async function hydrateFromSupabase() {
       console.warn('Supabase fetch notice:', error.message);
     } else if (data?.payload) {
       publishedContentSnapshot = cloneState(data.payload);
+      loadedPayload = data.payload;
+    }
+
+    if (loadedPayload) {
       editorState = {
         ...editorState,
-        ...cloneState(data.payload),
-        meta: { ...editorState.meta, ...(data.payload.meta || {}) },
-        brand: { ...editorState.brand, ...(data.payload.brand || {}) }
+        ...cloneState(loadedPayload),
+        meta: { ...editorState.meta, ...(loadedPayload.meta || {}) },
+        brand: { ...editorState.brand, ...(loadedPayload.brand || {}) }
       };
     }
 
@@ -1770,10 +2166,7 @@ async function hydrateFromSupabase() {
       }
     });
 
-    Object.entries(editorState.textStyles || {}).forEach(([key, st]) => {
-      const el = document.querySelector(`[data-style-key="${key}"], [data-edit-text="${key}"]`);
-      if (el) applyElementStyle(el, st);
-    });
+    reapplyAllElementStyles();
 
     Object.entries(editorState.colors || {}).forEach(([cssVar, hex]) => {
       if (cssVar && hex) document.documentElement.style.setProperty(cssVar, hex);
@@ -1788,6 +2181,7 @@ async function hydrateFromSupabase() {
 
     const isEditMode = new URLSearchParams(window.location.search).get('edit') === 'true';
     renderDynamicBlocks(editorState.blocks || [], isEditMode);
+    reapplyAllElementStyles();
 
     if (isEditMode) {
       await initCanvaStudio();
