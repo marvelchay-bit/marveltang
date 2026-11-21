@@ -296,7 +296,7 @@ function captureDomState() {
 
   const images = { ...(editorState.images || {}) };
   document.querySelectorAll('[data-edit-img]').forEach((img) => {
-    if (!images[img.dataset.editImg]) {
+    if (img.getAttribute('src')) {
       images[img.dataset.editImg] = img.getAttribute('src');
     }
   });
@@ -333,6 +333,11 @@ function applySnapshotToDom(snapshot) {
   Object.entries(editorState.texts || {}).forEach(([key, htmlVal]) => {
     const el = document.querySelector(`[data-edit-text="${key}"]`);
     if (el && !isStudioUiNode(el)) el.innerHTML = htmlVal;
+  });
+
+  Object.entries(editorState.images || {}).forEach(([imgKey, srcVal]) => {
+    const imgEl = document.querySelector(`[data-edit-img="${imgKey}"]`);
+    if (imgEl && srcVal) imgEl.src = srcVal;
   });
 
   Object.entries(editorState.colors || {}).forEach(([cssVar, hex]) => {
@@ -385,6 +390,20 @@ function clearBoxHandles() {
   }
 }
 
+function beginBoxMoveSession(boxEl, boxKey, clientX, clientY) {
+  pushUndoSnapshot();
+  const st = editorState.textStyles?.[boxKey] || {};
+  boxTransformSession = {
+    mode: 'move',
+    el: boxEl,
+    key: boxKey,
+    startX: clientX,
+    startY: clientY,
+    origPosX: Number(st.posX || 0),
+    origPosY: Number(st.posY || 0)
+  };
+}
+
 function attachSixDotsAndMovePill(boxEl, boxKey) {
   clearBoxHandles();
   activeBoxEl = boxEl;
@@ -392,22 +411,12 @@ function attachSixDotsAndMovePill(boxEl, boxKey) {
 
   const movePill = document.createElement('span');
   movePill.className = 'studio-drag-pill';
-  movePill.textContent = 'DRAG BOX';
+  movePill.textContent = 'MOVE BOX';
   movePill.title = 'Drag to reposition box';
   movePill.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    pushUndoSnapshot();
-    const st = editorState.textStyles?.[boxKey] || {};
-    boxTransformSession = {
-      mode: 'move',
-      el: boxEl,
-      key: boxKey,
-      startX: e.clientX,
-      startY: e.clientY,
-      origPosX: Number(st.posX || 0),
-      origPosY: Number(st.posY || 0)
-    };
+    beginBoxMoveSession(boxEl, boxKey, e.clientX, e.clientY);
   });
   boxEl.appendChild(movePill);
 
@@ -459,13 +468,11 @@ function updateSpatialGuidesForBox(boxEl) {
   const centerX = cRect.left + cRect.width / 2;
   const boxCenterX = r.left + r.width / 2;
 
-  // Center guide
   const centerLine = document.createElement('div');
   centerLine.className = 'studio-guide-v studio-guide-center';
   centerLine.style.left = `${centerX}px`;
   overlay.appendChild(centerLine);
 
-  // Left & Right margin border guides
   const leftMargin = document.createElement('div');
   leftMargin.className = 'studio-guide-v studio-guide-margin';
   leftMargin.style.left = `${cRect.left + 56}px`;
@@ -475,7 +482,6 @@ function updateSpatialGuidesForBox(boxEl) {
   rightMargin.style.left = `${cRect.right - 56}px`;
   overlay.append(leftMargin, rightMargin);
 
-  // Neighboring blocks contrast lines
   const neighbors = Array.from(
     document.querySelectorAll('.content-wrapper .featured-card, .content-wrapper .hero-banner, .content-wrapper section')
   ).filter((el) => el !== boxEl && !el.contains(boxEl) && !boxEl.contains(el) && !isStudioUiNode(el));
@@ -484,7 +490,7 @@ function updateSpatialGuidesForBox(boxEl) {
   for (const nb of neighbors) {
     const nr = nb.getBoundingClientRect();
     if (nr.width <= 0 || nr.height <= 0) continue;
-    const alignedEdge = Math.abs(nr.left - r.left) < 10 || Math.abs(nr.right - r.right) < 10;
+    const alignedEdge = Math.abs(nr.left - r.left) < 12 || Math.abs(nr.right - r.right) < 12;
     const vGap = nr.top >= r.bottom ? nr.top - r.bottom : r.top >= nr.bottom ? r.top - nr.bottom : null;
 
     if (alignedEdge) {
@@ -494,7 +500,7 @@ function updateSpatialGuidesForBox(boxEl) {
       overlay.appendChild(edgeLine);
     }
 
-    if (vGap !== null && vGap < 220 && (nearestGap === null || vGap < nearestGap)) {
+    if (vGap !== null && vGap < 240 && (nearestGap === null || vGap < nearestGap)) {
       nearestGap = Math.round(vGap);
       const hLine = document.createElement('div');
       hLine.className = 'studio-guide-h studio-guide-neighbor';
@@ -671,11 +677,12 @@ function bindEditableTargets() {
     if (editorState.textStyles?.[bKey]) {
       applyElementStyle(cardEl, editorState.textStyles[bKey]);
     }
-    cardEl.addEventListener('click', (e) => {
-      if (e.target.closest('[contenteditable="true"], a, button, input')) return;
-      e.stopPropagation();
+    cardEl.addEventListener('mousedown', (e) => {
+      if (isStudioUiNode(e.target)) return;
+      if (e.target.closest('[contenteditable="true"], a, button, input, select, textarea')) return;
       attachSixDotsAndMovePill(cardEl, bKey);
       updateSpatialGuidesForBox(cardEl);
+      beginBoxMoveSession(cardEl, bKey, e.clientX, e.clientY);
     });
   });
 
@@ -1021,7 +1028,27 @@ function renderDynamicBlocks(blocks, isEditMode) {
 
     const styleKeyPrefix = `block:${block.id}`;
 
-    if (block.type === 'text-node') {
+    if (block.type === 'big-showcase') {
+      const sKey = `${styleKeyPrefix}:headline`;
+      const imgUrl = block.imageUrl || 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=85';
+      wrapper.innerHTML = `
+        ${controlsHtml}
+        <div class="featured-card">
+          <div class="big-showcase-grid">
+            <div>
+              <span class="mono" contenteditable="${isEditMode}" data-block-field="kicker">${block.kicker || 'VISUAL SHOWCASE'}</span>
+              <h2 class="big-showcase-display" contenteditable="${isEditMode}" data-block-field="headline" data-style-key="${sKey}">${block.headline || 'BRANDS BUILT TO BE TRUSTED.'}</h2>
+              <p contenteditable="${isEditMode}" data-block-field="body" style="margin-top:16px;margin-bottom:0;">${block.body || 'Big editorial statement paired with a high-impact visual frame.'}</p>
+            </div>
+            <div>
+              <img src="${imgUrl}" alt="${block.headline || 'Showcase'}" class="big-showcase-img">
+              ${isEditMode ? `<input type="text" data-tpl-img="${block.id}::imageUrl" value="${block.imageUrl || ''}" placeholder="Showcase image URL" style="width:100%;padding:6px;margin-top:10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-color);color:var(--text-main);">` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+      applyElementStyle(wrapper.querySelector(`[data-style-key="${sKey}"]`), editorState.textStyles?.[sKey]);
+    } else if (block.type === 'text-node') {
       const tagMap = { h1: 'h1', h2: 'h2', h3: 'h3', p: 'p' };
       const tag = tagMap[block.tag] || 'p';
       const fKey = `${styleKeyPrefix}:content`;
@@ -1311,6 +1338,14 @@ function addBlock(type, templateId = 'two-col-text') {
   const id = `blk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
   const templates = {
+    'big-showcase': {
+      id,
+      type: 'big-showcase',
+      kicker: 'BIG SHOWCASE',
+      headline: 'BRANDS BUILT TO BE TRUSTED.',
+      body: 'Large visual frame paired with bold editorial copy.',
+      imageUrl: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=85'
+    },
     'text-node': { id, type: 'text-node', tag: 'p', content: 'New editorial paragraph — click to edit.' },
     info: { id, type: 'info', tag: 'INFO // NOTE', title: 'Information Block', infoBody: 'Add detailed context, notes, or references.' },
     'project-link': {
@@ -1434,6 +1469,34 @@ async function uploadFileToSupabase(file) {
     scheduleAutoSave();
   }
   return publicUrl;
+}
+
+function renderWidgetPreviewHtml(type) {
+  if (type === 'big-showcase') {
+    return `<div style="display:flex;gap:8px;align-items:center;height:100%;"><div style="flex:1;"><div class="studio-preview-line dark" style="width:85%;"></div><div class="studio-preview-line light" style="width:65%;margin-top:4px;"></div></div><div style="width:38px;height:30px;border-radius:4px;background:#CBD5E1;"></div></div>`;
+  }
+  if (type === 'info') {
+    return `<div style="border-left:3px solid #2563EB;padding-left:6px;"><div class="studio-preview-line dark" style="width:60%;"></div><div class="studio-preview-line light" style="width:80%;margin-top:4px;"></div></div>`;
+  }
+  if (type === 'carousel') {
+    return `<div style="display:flex;align-items:center;justify-content:space-between;height:100%;"><span style="font-size:10px;color:#64748B;">◀</span><div style="flex:1;margin:0 6px;height:24px;border-radius:4px;background:#E2E8F0;"></div><span style="font-size:10px;color:#64748B;">▶</span></div>`;
+  }
+  if (type === 'project-link') {
+    return `<div class="studio-preview-line dark" style="width:72%;"></div><span style="font-size:9px;font-weight:700;color:#2563EB;">↗ https://...</span>`;
+  }
+  if (type === 'quote') {
+    return `<div style="border-left:2px solid #111827;padding-left:6px;font-style:italic;font-size:10px;color:#334155;">“Insight...”</div>`;
+  }
+  if (type === 'chart') {
+    return `<div style="display:flex;align-items:flex-end;gap:5px;height:28px;"><span style="width:10px;height:45%;background:#94A3B8;border-radius:2px;"></span><span style="width:10px;height:80%;background:#475569;border-radius:2px;"></span><span style="width:10px;height:60%;background:#94A3B8;border-radius:2px;"></span><span style="width:10px;height:95%;background:#1E293B;border-radius:2px;"></span></div>`;
+  }
+  if (type === 'image') {
+    return `<div style="height:28px;border-radius:4px;background:#E2E8F0;display:flex;align-items:center;justify-content:center;font-size:9px;color:#475569;">IMAGE FRAME</div>`;
+  }
+  if (type === 'divider') {
+    return `<div style="width:100%;height:1px;background:#94A3B8;"></div>`;
+  }
+  return `<div class="studio-preview-line dark"></div><div class="studio-preview-line light"></div>`;
 }
 
 function renderDrawerContent() {
@@ -1563,34 +1626,38 @@ function renderDrawerContent() {
     });
   } else if (activeDrawerTab === 'widgets') {
     const items = [
-      { type: 'text-node', icon: 'T', label: 'Text Block' },
-      { type: 'info', icon: 'INF', label: 'Info Block' },
-      { type: 'carousel', icon: 'SLD', label: 'Carousel' },
-      { type: 'project-link', icon: 'PRJ', label: 'Project Link' },
-      { type: 'callout', icon: 'BOX', label: 'Callout Box' },
-      { type: 'quote', icon: '“”', label: 'Pull Quote' },
-      { type: 'list', icon: '•', label: 'Index List' },
-      { type: 'image', icon: 'IMG', label: 'Image Card' },
-      { type: 'video', icon: 'YT', label: 'YouTube Embed' },
-      { type: 'embed', icon: 'URL', label: 'Web Embed' },
-      { type: 'table', icon: 'TBL', label: 'Comparison Table' },
-      { type: 'chart', icon: 'CHR', label: 'Data Chart' },
-      { type: 'pdf', icon: 'PDF', label: 'PDF Document' },
-      { type: 'author', icon: 'BIO', label: 'Author Box' },
-      { type: 'divider', icon: '—', label: 'Section Divider' }
+      { type: 'big-showcase', label: 'Big Visual Showcase' },
+      { type: 'info', label: 'Info Block' },
+      { type: 'carousel', label: 'Carousel' },
+      { type: 'project-link', label: 'Project Link' },
+      { type: 'text-node', label: 'Text Block' },
+      { type: 'callout', label: 'Callout Box' },
+      { type: 'quote', label: 'Pull Quote' },
+      { type: 'list', label: 'Index List' },
+      { type: 'image', label: 'Image Card' },
+      { type: 'video', label: 'YouTube Embed' },
+      { type: 'embed', label: 'Web Embed' },
+      { type: 'table', label: 'Comparison Table' },
+      { type: 'chart', label: 'Data Chart' },
+      { type: 'pdf', label: 'PDF Document' },
+      { type: 'author', label: 'Author Box' },
+      { type: 'divider', label: 'Section Divider' }
     ];
 
     drawer.innerHTML = `
       <div class="studio-drawer-header">
-        <span class="studio-active-page-ext">Blocks &amp; Info</span>
+        <span class="studio-active-page-ext">Blocks &amp; Previews</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         ${items
           .map(
             (it) => `
-          <button type="button" class="studio-widget-btn" data-add-widget="${it.type}">
-            <span class="studio-widget-icon">${it.icon}</span>
-            <span>${it.label}</span>
+          <button type="button" class="studio-widget-card" data-add-widget="${it.type}">
+            <div class="studio-widget-head">
+              <span>${it.label}</span>
+              <span style="font-size:10px;color:#2563EB;">+ Add</span>
+            </div>
+            <div class="studio-widget-preview">${renderWidgetPreviewHtml(it.type)}</div>
           </button>
         `
           )
@@ -1621,9 +1688,12 @@ function renderDrawerContent() {
         ${templateOptions
           .map(
             (t) => `
-          <button type="button" class="studio-widget-btn" data-add-template="${t.id}">
-            <span class="studio-widget-icon">${t.hasImg ? 'IMG' : 'TXT'}</span>
-            <span>${t.label}</span>
+          <button type="button" class="studio-widget-card" data-add-template="${t.id}">
+            <div class="studio-widget-head">
+              <span>${t.label}</span>
+              <span style="font-size:10px;color:#2563EB;">${t.hasImg ? 'IMG' : 'TXT'}</span>
+            </div>
+            <div class="studio-widget-preview">${renderWidgetPreviewHtml(t.hasImg ? 'image' : 'text-node')}</div>
           </button>
         `
           )
@@ -2093,7 +2163,7 @@ async function initCanvaStudio() {
     });
   });
 
-  document.addEventListener('click', (e) => {
+  document.addEventListener('mousedown', (e) => {
     if (isStudioUiNode(e.target)) return;
     if (!e.target.closest('.featured-card, .hero-banner, .dynamic-block, [data-edit-text]')) {
       clearBoxHandles();
@@ -2164,6 +2234,11 @@ async function hydrateFromSupabase() {
       if (el && !isStudioUiNode(el)) {
         el.innerHTML = htmlVal;
       }
+    });
+
+    Object.entries(editorState.images || {}).forEach(([imgKey, srcVal]) => {
+      const imgEl = document.querySelector(`[data-edit-img="${imgKey}"]`);
+      if (imgEl && srcVal) imgEl.src = srcVal;
     });
 
     reapplyAllElementStyles();
